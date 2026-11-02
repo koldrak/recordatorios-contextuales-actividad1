@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">Recordatorios contextuales</string>
+    <string name="titulo_pantalla">Mis recordatorios</string>
+    <string name="subtitulo_pantalla">Tareas organizadas por prioridad y estado</string>
+    <string name="sin_recordatorios">No hay recordatorios para mostrar.</string>
+    <string name="categoria_estudio">Estudio</string>
+    <string name="categoria_trabajo">Trabajo</string>
+    <string name="categoria_personal">Personal</string>
+    <string name="prioridad_alta">Alta</string>
+    <string name="prioridad_media">Media</string>
+    <string name="prioridad_baja">Baja</string>
+    <string name="estado_pendiente">Pendiente</string>
+    <string name="estado_completado">Completado</string>
+    <string name="estado_vencido">Vencido</string>
+    <string name="recordatorio_entrega">Entregar actividad de programación móvil</string>
+    <string name="recordatorio_reunion">Preparar reunión del equipo</string>
+    <string name="recordatorio_compras">Comprar materiales de estudio</string>
+    <string name="aviso_entrega">Recordar antes de las 20:00</string>
+    <string name="ubicacion_casa">Casa</string>
+    <string name="agregar_recordatorio">Agregar recordatorio</string>
+</resources>

@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">Contextual reminders</string>
+    <string name="titulo_pantalla">My reminders</string>
+    <string name="subtitulo_pantalla">Tasks organized by priority and status</string>
+    <string name="sin_recordatorios">There are no reminders to display.</string>
+    <string name="categoria_estudio">Study</string>
+    <string name="categoria_trabajo">Work</string>
+    <string name="categoria_personal">Personal</string>
+    <string name="prioridad_alta">High</string>
+    <string name="prioridad_media">Medium</string>
+    <string name="prioridad_baja">Low</string>
+    <string name="estado_pendiente">Pending</string>
+    <string name="estado_completado">Completed</string>
+    <string name="estado_vencido">Overdue</string>
+    <string name="recordatorio_entrega">Submit mobile programming assignment</string>
+    <string name="recordatorio_reunion">Prepare team meeting</string>
+    <string name="recordatorio_compras">Buy study materials</string>
+    <string name="aviso_entrega">Remember before 8:00 PM</string>
+    <string name="ubicacion_casa">Home</string>
+    <string name="agregar_recordatorio">Add reminder</string>
+</resources>
