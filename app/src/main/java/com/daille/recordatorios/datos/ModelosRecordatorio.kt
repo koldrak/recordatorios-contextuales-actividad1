@@ -41,7 +41,10 @@ data class AvisoContextual(
 /** Agrupa los datos inmutables que describen una tarea pendiente o completada. */
 data class Recordatorio(
     val identificador: Int,
-    @StringRes val recursoTitulo: Int,
+    @StringRes val recursoTitulo: Int? = null,
+    @StringRes val recursoDescripcion: Int? = null,
+    val tituloPersonalizado: String? = null,
+    val descripcionPersonalizada: String? = null,
     val categoria: Categoria,
     val prioridad: Prioridad,
     val estado: EstadoRecordatorio,
@@ -50,10 +53,14 @@ data class Recordatorio(
     init {
         // Evita identificadores no válidos para diferenciar cada tarea.
         require(identificador > 0) { "El identificador debe ser mayor que cero." }
+        // Exige un título localizado o escrito por la persona usuaria.
+        require(recursoTitulo != null || !tituloPersonalizado.isNullOrBlank()) {
+            "El recordatorio debe tener un título."
+        }
     }
 }
 
-/** Provee los datos simulados requeridos mientras no se implementa persistencia local. */
+/** Provee las categorías disponibles para crear recordatorios mientras no se implementa persistencia local. */
 object FuenteRecordatoriosSimulados {
     /** Usa un Set para impedir categorías repetidas según la igualdad de la data class. */
     val categoriasDisponibles: Set<Categoria> = setOf(
@@ -62,43 +69,4 @@ object FuenteRecordatoriosSimulados {
         Categoria("personal", R.string.categoria_personal)
     )
 
-    /** Usa una List inmutable para representar los recordatorios iniciales de la aplicación. */
-    val recordatorios: List<Recordatorio> = listOf(
-        Recordatorio(
-            identificador = 1,
-            recursoTitulo = R.string.recordatorio_entrega,
-            categoria = categoriaPorIdentificador("estudio"),
-            prioridad = Prioridad.ALTA,
-            estado = EstadoRecordatorio.Pendiente,
-            aviso = AvisoContextual(R.string.aviso_entrega, R.string.ubicacion_casa)
-        ),
-        Recordatorio(
-            identificador = 2,
-            recursoTitulo = R.string.recordatorio_reunion,
-            categoria = categoriaPorIdentificador("trabajo"),
-            prioridad = Prioridad.MEDIA,
-            estado = EstadoRecordatorio.Pendiente
-        ),
-        Recordatorio(
-            identificador = 3,
-            recursoTitulo = R.string.recordatorio_compras,
-            categoria = categoriaPorIdentificador("personal"),
-            prioridad = Prioridad.BAJA,
-            estado = EstadoRecordatorio.Completado
-        )
-    )
-
-    /** Filtra las tareas para obtener solamente las que poseen un estado específico. */
-    fun filtrarPorEstado(estadoBuscado: EstadoRecordatorio): List<Recordatorio> =
-        recordatorios.filter { recordatorio -> recordatorio.estado == estadoBuscado }
-
-    /** Filtra las tareas para obtener solamente las que poseen una prioridad específica. */
-    fun filtrarPorPrioridad(prioridadBuscada: Prioridad): List<Recordatorio> =
-        recordatorios.filter { recordatorio -> recordatorio.prioridad == prioridadBuscada }
-
-    /** Busca una categoría válida antes de asignarla a un recordatorio. */
-    private fun categoriaPorIdentificador(identificadorBuscado: String): Categoria =
-        checkNotNull(categoriasDisponibles.find { categoria -> categoria.identificador == identificadorBuscado }) {
-            "La categoría solicitada no existe."
-        }
 }

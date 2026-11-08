@@ -4,45 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import com.daille.recordatorios.datos.Categoria
-import com.daille.recordatorios.datos.EstadoRecordatorio
-import com.daille.recordatorios.datos.FuenteRecordatoriosSimulados
-import com.daille.recordatorios.datos.Prioridad
-import com.daille.recordatorios.datos.Recordatorio
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.daille.recordatorios.interfaz.PantallaCrearRecordatorio
+import com.daille.recordatorios.interfaz.PantallaDetalleRecordatorio
+import com.daille.recordatorios.interfaz.PantallaListaRecordatorios
 import com.daille.recordatorios.ui.theme.RecordatoriosTheme
 
+/** Es la actividad principal que inicializa la interfaz declarativa de la aplicación. */
 class MainActivity : ComponentActivity() {
-    /** Prepara una interfaz Compose que puede ocupar toda la pantalla del dispositivo. */
+    /** Configura la ventana y muestra el grafo de navegación de los recordatorios. */
     override fun onCreate(estadoGuardado: Bundle?) {
         super.onCreate(estadoGuardado)
         enableEdgeToEdge()
         setContent {
-            // Aplica el tema Material 3
+            // Aplica el tema común antes de mostrar cualquiera de los destinos de la aplicación.
             RecordatoriosTheme {
                 AplicacionRecordatorios()
             }
@@ -50,145 +31,54 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Asocia cada categoría con un color para su identificación visual usando un Map. */
-private val coloresPorCategoria: Map<Categoria, Color> = mapOf(
-    Categoria("estudio", R.string.categoria_estudio) to Color(0xFF6750A4),
-    Categoria("trabajo", R.string.categoria_trabajo) to Color(0xFF006C4C),
-    Categoria("personal", R.string.categoria_personal) to Color(0xFFB3261E)
-)
+/** Centraliza las rutas para evitar cadenas repetidas y conservar identificadores claros en el grafo. */
+private object RutasRecordatorios {
+    const val listado = "listado"
+    const val crear = "crear"
+    const val detalle = "detalle/{identificador}"
 
-/** Conecta los recordatorios simulados con la pantalla principal de la aplicación. */
-@Composable
-fun AplicacionRecordatorios() {
-    // Lee la lista simulada que posteriormente podrá provenir de una base de datos.
-    val recordatorios = FuenteRecordatoriosSimulados.recordatorios
-
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        bottomBar = { BotonAgregarRecordatorio() }
-    ) { rellenoInterno ->
-        PantallaRecordatorios(recordatorios = recordatorios, rellenoInterno = rellenoInterno)
-    }
+    /** Construye la ruta de detalle transportando únicamente el identificador requerido. */
+    fun detalle(identificador: Int): String = "detalle/$identificador"
 }
 
-/** Muestra un botón fijo en la parte inferior como preparación para el futuro formulario. */
+/** Conecta listado, creación y detalle sin entregar el NavController a componentes reutilizables. */
 @Composable
-private fun BotonAgregarRecordatorio() {
-    // Separa el botón de la lista y de la barra de gestos del sistema Android.
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        tonalElevation = 4.dp,
-        shadowElevation = 6.dp
+fun AplicacionRecordatorios(modifier: Modifier = Modifier) {
+    // El NavController se administra en el nivel superior, responsable de conectar destinos.
+    val controladorNavegacion = rememberNavController()
+
+    NavHost(
+        navController = controladorNavegacion,
+        startDestination = RutasRecordatorios.listado,
+        modifier = modifier
     ) {
-        Button(
-            onClick = {
-                // La acción se implementará cuando se agregue el formulario de creación.
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-        ) {
-            Text(text = stringResource(R.string.agregar_recordatorio))
-        }
-    }
-}
-
-/** Construye el encabezado y la lista desplazable de recordatorios. */
-@Composable
-private fun PantallaRecordatorios(recordatorios: List<Recordatorio>, rellenoInterno: PaddingValues) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(rellenoInterno),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = stringResource(R.string.titulo_pantalla),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.subtitulo_pantalla),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        if (recordatorios.isEmpty()) {
-            item { Text(text = stringResource(R.string.sin_recordatorios)) }
-        } else {
-            items(items = recordatorios, key = { recordatorio -> recordatorio.identificador }) { recordatorio ->
-                TarjetaRecordatorio(recordatorio = recordatorio)
-            }
-        }
-    }
-}
-
-/** Presenta los atributos requeridos de un recordatorio mediante una tarjeta de Material 3. */
-@Composable
-private fun TarjetaRecordatorio(recordatorio: Recordatorio) {
-    // Usa el color primario si en el futuro aparece una categoría que no está en el Map.
-    val colorCategoria = coloresPorCategoria[recordatorio.categoria] ?: MaterialTheme.colorScheme.primary
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                text = stringResource(recordatorio.recursoTitulo),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+        composable(RutasRecordatorios.listado) {
+            PantallaListaRecordatorios(
+                onCrearRecordatorio = { controladorNavegacion.navigate(RutasRecordatorios.crear) },
+                onRecordatorioClick = { identificador ->
+                    controladorNavegacion.navigate(RutasRecordatorios.detalle(identificador))
+                }
             )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Etiqueta(texto = stringResource(recordatorio.categoria.recursoNombre), color = colorCategoria)
-                Etiqueta(texto = stringResource(recordatorio.prioridad.recursoNombre), color = colorPrioridad(recordatorio.prioridad))
-                Etiqueta(texto = stringResource(recordatorio.estado.recursoNombre), color = colorEstado(recordatorio.estado))
-            }
+        }
+        composable(RutasRecordatorios.crear) {
+            PantallaCrearRecordatorio(
+                onGuardar = {
+                    // Vuelve al listado existente; este observa el repositorio y recibe el registro guardado.
+                    controladorNavegacion.popBackStack()
+                },
+                onCancelar = { controladorNavegacion.popBackStack() }
+            )
+        }
+        composable(
+            route = RutasRecordatorios.detalle,
+            arguments = listOf(navArgument("identificador") { type = NavType.IntType })
+        ) { entradaPila ->
+            // Obtiene solo el identificador desde la ruta; el detalle recupera el objeto desde el repositorio.
+            val identificador = entradaPila.arguments?.getInt("identificador") ?: return@composable
+            PantallaDetalleRecordatorio(
+                identificador = identificador,
+                onVolver = { controladorNavegacion.popBackStack() }
+            )
         }
     }
-}
-
-/** Dibuja una etiqueta breve para destacar una categoría, una prioridad o un estado. */
-@Composable
-private fun Etiqueta(texto: String, color: Color) {
-    Surface(color = color.copy(alpha = 0.16f), shape = MaterialTheme.shapes.small) {
-        Text(
-            text = texto,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            color = color,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-/** Devuelve un color semántico para cada nivel de prioridad. */
-private fun colorPrioridad(prioridad: Prioridad): Color = when (prioridad) {
-    Prioridad.ALTA -> Color(0xFFB3261E)
-    Prioridad.MEDIA -> Color(0xFF9A6700)
-    Prioridad.BAJA -> Color(0xFF006E1C)
-}
-
-/** Devuelve un color semántico para cada estado de la sealed class. */
-private fun colorEstado(estado: EstadoRecordatorio): Color = when (estado) {
-    EstadoRecordatorio.Pendiente -> Color(0xFF2457D6)
-    EstadoRecordatorio.Completado -> Color(0xFF006E1C)
-    EstadoRecordatorio.Vencido -> Color(0xFFB3261E)
-}
-
-/** Genera una vista previa de la interfaz directamente desde Android Studio. */
-@Preview(showBackground = true)
-@Composable
-private fun VistaPreviaAplicacionRecordatorios() {
-    RecordatoriosTheme { AplicacionRecordatorios() }
 }
