@@ -14,11 +14,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.daille.recordatorios.datos.ContenedorDependencias
+import com.daille.recordatorios.interfaz.PantallaAutenticacion
 import com.daille.recordatorios.interfaz.PantallaConfiguracion
 import com.daille.recordatorios.interfaz.PantallaCrearRecordatorio
 import com.daille.recordatorios.interfaz.PantallaDetalleRecordatorio
 import com.daille.recordatorios.interfaz.PantallaListaRecordatorios
 import com.daille.recordatorios.presentacion.ModeloVistaConfiguracion
+import com.daille.recordatorios.presentacion.ModeloVistaAutenticacion
 import com.daille.recordatorios.ui.theme.RecordatoriosTheme
 
 /** Inicializa dependencias persistentes y muestra el grafo de navegación de la aplicación. */
@@ -49,43 +51,61 @@ fun AplicacionRecordatorios(modifier: Modifier = Modifier) {
     // El modelo de configuración observa DataStore y mantiene el tema incluso al recrear la actividad.
     val modeloVistaConfiguracion: ModeloVistaConfiguracion = viewModel()
     val estadoConfiguracion = modeloVistaConfiguracion.estado.collectAsStateWithLifecycle().value
-    val controladorNavegacion = rememberNavController()
+    // El modelo de autenticación decide qué contenido puede consultar la persona según la sesión Firebase vigente.
+    val modeloVistaAutenticacion: ModeloVistaAutenticacion = viewModel()
+    val estadoAutenticacion = modeloVistaAutenticacion.estado.collectAsStateWithLifecycle().value
 
     RecordatoriosTheme(darkTheme = estadoConfiguracion.preferencias.modoOscuro) {
-        NavHost(
-            navController = controladorNavegacion,
-            startDestination = RutasRecordatorios.listado,
-            modifier = modifier
-        ) {
-            composable(RutasRecordatorios.listado) {
-                PantallaListaRecordatorios(
-                    onCrearRecordatorio = { controladorNavegacion.navigate(RutasRecordatorios.crear) },
-                    onRecordatorioClick = { identificador ->
-                        controladorNavegacion.navigate(RutasRecordatorios.detalle(identificador))
-                    },
-                    onAbrirConfiguracion = { controladorNavegacion.navigate(RutasRecordatorios.configuracion) }
-                )
-            }
-            composable(RutasRecordatorios.crear) {
-                PantallaCrearRecordatorio(
-                    onGuardar = { controladorNavegacion.popBackStack() },
-                    onCancelar = { controladorNavegacion.popBackStack() }
-                )
-            }
-            composable(RutasRecordatorios.configuracion) {
-                PantallaConfiguracion(onVolver = { controladorNavegacion.popBackStack() })
-            }
-            composable(
-                route = RutasRecordatorios.detalle,
-                arguments = listOf(navArgument("identificador") { type = NavType.StringType })
-            ) { entradaPila ->
-                // Recupera únicamente el identificador requerido para que el detalle consulte Room mediante el repositorio.
-                val identificador = entradaPila.arguments?.getString("identificador") ?: return@composable
-                PantallaDetalleRecordatorio(
-                    identificador = identificador,
-                    onVolver = { controladorNavegacion.popBackStack() }
-                )
-            }
+        if (estadoAutenticacion.sesion == null) {
+            // La pantalla de acceso se muestra al iniciar, cerrar o perder una sesión válida.
+            PantallaAutenticacion(modifier = modifier)
+        } else {
+            NavegacionRecordatorios(
+                onCerrarSesion = modeloVistaAutenticacion::cerrarSesion,
+                modifier = modifier
+            )
+        }
+    }
+}
+
+/** Navega por recordatorios únicamente cuando Firebase confirmó una identidad autenticada. */
+@Composable
+private fun NavegacionRecordatorios(onCerrarSesion: () -> Unit, modifier: Modifier = Modifier) {
+    val controladorNavegacion = rememberNavController()
+    NavHost(
+        navController = controladorNavegacion,
+        startDestination = RutasRecordatorios.listado,
+        modifier = modifier
+    ) {
+        composable(RutasRecordatorios.listado) {
+            PantallaListaRecordatorios(
+                onCrearRecordatorio = { controladorNavegacion.navigate(RutasRecordatorios.crear) },
+                onRecordatorioClick = { identificador ->
+                    controladorNavegacion.navigate(RutasRecordatorios.detalle(identificador))
+                },
+                onAbrirConfiguracion = { controladorNavegacion.navigate(RutasRecordatorios.configuracion) },
+                onCerrarSesion = onCerrarSesion
+            )
+        }
+        composable(RutasRecordatorios.crear) {
+            PantallaCrearRecordatorio(
+                onGuardar = { controladorNavegacion.popBackStack() },
+                onCancelar = { controladorNavegacion.popBackStack() }
+            )
+        }
+        composable(RutasRecordatorios.configuracion) {
+            PantallaConfiguracion(onVolver = { controladorNavegacion.popBackStack() })
+        }
+        composable(
+            route = RutasRecordatorios.detalle,
+            arguments = listOf(navArgument("identificador") { type = NavType.StringType })
+        ) { entradaPila ->
+            // Recupera únicamente el identificador requerido para que el detalle consulte Room mediante el repositorio.
+            val identificador = entradaPila.arguments?.getString("identificador") ?: return@composable
+            PantallaDetalleRecordatorio(
+                identificador = identificador,
+                onVolver = { controladorNavegacion.popBackStack() }
+            )
         }
     }
 }

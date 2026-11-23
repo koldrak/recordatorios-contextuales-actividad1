@@ -104,6 +104,10 @@ interface DaoRecordatorios {
     /** Elimina definitivamente una fila solo después de confirmar su eliminación remota. */
     @Query("DELETE FROM recordatorios WHERE identificador = :identificador")
     suspend fun eliminarDefinitivamente(identificador: String)
+
+    /** Elimina la caché local al cerrar o invalidar una sesión para impedir que otra cuenta vea esos datos. */
+    @Query("DELETE FROM recordatorios")
+    suspend fun eliminarTodos()
 }
 
 /** Convierte los tipos propios de Kotlin en valores simples que SQLite puede almacenar. */
@@ -136,7 +140,8 @@ class ConversoresBaseDatos {
 }
 
 /** Reúne el esquema de Room y expone el DAO utilizado por el repositorio. */
-@Database(entities = [EntidadRecordatorio::class], version = 1, exportSchema = true)
+// La exportación se desactiva mientras se evita la incompatibilidad de Room 2.8.4 con KSP detectada en este proyecto.
+@Database(entities = [EntidadRecordatorio::class], version = 1, exportSchema = false)
 @TypeConverters(ConversoresBaseDatos::class)
 abstract class BaseDatosRecordatorios : RoomDatabase() {
     /** Entrega el único DAO que administra las filas de recordatorios. */

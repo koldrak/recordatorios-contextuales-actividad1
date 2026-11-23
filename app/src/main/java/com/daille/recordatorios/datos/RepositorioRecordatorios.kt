@@ -9,17 +9,18 @@ import com.daille.recordatorios.datos.local.aEntidad
 import com.daille.recordatorios.datos.preferencias.RepositorioPreferencias
 import com.daille.recordatorios.datos.preferencias.almacenPreferencias
 import com.daille.recordatorios.datos.red.ObservadorConectividad
-import com.daille.recordatorios.datos.remoto.DtoRecordatorioRemoto
-import com.daille.recordatorios.datos.remoto.FabricaServicioRemoto
-import com.daille.recordatorios.datos.remoto.ServicioRecordatoriosRemoto
-import com.daille.recordatorios.datos.remoto.aDtoRemoto
+import com.daille.recordatorios.datos.autenticacion.RepositorioAutenticacion
+import com.daille.recordatorios.datos.autenticacion.RepositorioAutenticacionFirebase
+import com.daille.recordatorios.datos.remoto.FuenteRecordatoriosFirebase
+import com.daille.recordatorios.datos.remoto.ProveedorIdentidad
+import com.daille.recordatorios.datos.remoto.ProveedorIdentidadFirebase
+import com.daille.recordatorios.datos.remoto.aEntidadLocal
+import com.daille.recordatorios.datos.remoto.aModeloFirebase
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import retrofit2.Response
-import java.io.IOException
-import java.net.SocketTimeoutException
 
 /** Describe el resultado de una sincronización sin exponer excepciones técnicas a las pantallas. */
 sealed interface ResultadoSincronizacion {
@@ -31,6 +32,9 @@ sealed interface ResultadoSincronizacion {
 
     /** Informa un fallo permanente, como una solicitud inválida, que requiere revisar los datos. */
     data object ErrorPermanente : ResultadoSincronizacion
+
+    /** Informa que no existe una sesión Firebase válida para determinar la ruta privada de Firestore. */
+    data object ErrorSinSesion : ResultadoSincronizacion
 }
 
 /** Define la fuente única de datos que utilizan los ViewModel, sin exponer Room ni Retrofit a Compose. */
@@ -54,10 +58,11 @@ interface RepositorioRecordatorios {
     suspend fun sincronizar(): ResultadoSincronizacion
 }
 
-/** Coordina Room y Retrofit bajo una estrategia local-first, manteniendo Room como fuente de verdad. */
+/** Coordina Room y Firebase bajo una estrategia local-first, manteniendo Room como fuente de verdad. */
 class RepositorioRecordatoriosLocalFirst(
     private val dao: DaoRecordatorios,
-    private val servicioRemoto: ServicioRecordatoriosRemoto
+    private val fuenteFirebase: FuenteRecordatoriosFirebase,
+    private val proveedorIdentidad: ProveedorIdentidad
 ) : RepositorioRecordatorios {
     /** Evita que dos eventos de red ejecuten simultáneamente la misma sincronización dentro del proceso. */
     private val mutexSincronizacion = Mutex()
@@ -102,116 +107,82 @@ class RepositorioRecordatoriosLocalFirst(
 
     /** Procesa una operación a la vez, conserva los cambios locales y clasifica las fallas de red o HTTP. */
     override suspend fun sincronizar(): ResultadoSincronizacion = mutexSincronizacion.withLock {
+        // El uid es obligatorio para que cada escritura se dirija solo a los datos de su cuenta.
+        val identificadorUsuario = proveedorIdentidad.obtenerIdentificadorUsuarioActual()
+            ?: return@withLock ResultadoSincronizacion.ErrorSinSesion
         val pendientes = dao.obtenerPendientesDeSincronizacion()
         for (entidad in pendientes) {
-            val resultado = sincronizarEntidad(entidad)
+            val resultado = sincronizarEntidad(identificadorUsuario, entidad)
             if (resultado != ResultadoSincronizacion.Exito) return@withLock resultado
         }
-        actualizarCambiosRemotosExistentes()
+        actualizarCambiosRemotos(identificadorUsuario)
     }
 
     /** Envía una creación, actualización o eliminación según el estado pendiente de la entidad local. */
-    private suspend fun sincronizarEntidad(entidad: EntidadRecordatorio): ResultadoSincronizacion = try {
+    private suspend fun sincronizarEntidad(
+        identificadorUsuario: String,
+        entidad: EntidadRecordatorio
+    ): ResultadoSincronizacion = try {
         when (entidad.estadoSincronizacion) {
-            EstadoSincronizacion.PENDIENTE, EstadoSincronizacion.ERROR -> sincronizarGuardado(entidad)
-            EstadoSincronizacion.PENDIENTE_ELIMINACION -> sincronizarEliminacion(entidad)
+            EstadoSincronizacion.PENDIENTE, EstadoSincronizacion.ERROR -> sincronizarGuardado(identificadorUsuario, entidad)
+            EstadoSincronizacion.PENDIENTE_ELIMINACION -> sincronizarEliminacion(identificadorUsuario, entidad)
             EstadoSincronizacion.SINCRONIZADO -> ResultadoSincronizacion.Exito
         }
-    } catch (_: SocketTimeoutException) {
+    } catch (error: FirebaseFirestoreException) {
         dao.actualizarEstadoSincronizacion(entidad.identificador, EstadoSincronizacion.ERROR)
-        ResultadoSincronizacion.ErrorReintentable
-    } catch (_: IOException) {
+        if (error.esReintentable()) ResultadoSincronizacion.ErrorReintentable else ResultadoSincronizacion.ErrorPermanente
+    } catch (_: Exception) {
         dao.actualizarEstadoSincronizacion(entidad.identificador, EstadoSincronizacion.ERROR)
         ResultadoSincronizacion.ErrorReintentable
     }
 
-    /** Elige POST o PUT sin duplicar un recurso remoto ya identificado. */
-    private suspend fun sincronizarGuardado(entidad: EntidadRecordatorio): ResultadoSincronizacion {
-        val respuesta = if (entidad.identificadorRemoto == null) {
-            servicioRemoto.crearRecordatorio(entidad.aDtoRemoto())
-        } else {
-            servicioRemoto.actualizarRecordatorio(entidad.identificadorRemoto, entidad.aDtoRemoto())
-        }
-        return procesarRespuestaGuardado(entidad, respuesta)
-    }
-
-    /** Confirma una creación o actualización exitosa, o conserva el cambio local cuando la respuesta falla. */
-    private suspend fun procesarRespuestaGuardado(
-        entidad: EntidadRecordatorio,
-        respuesta: Response<DtoRecordatorioRemoto>
-    ): ResultadoSincronizacion = when {
-        respuesta.isSuccessful -> {
-            val identificadorRemoto = respuesta.body()?.id?.toString() ?: entidad.identificadorRemoto
-            dao.confirmarSincronizacion(entidad.identificador, identificadorRemoto)
-            ResultadoSincronizacion.Exito
-        }
-
-        respuesta.code() in 500..599 -> {
-            dao.actualizarEstadoSincronizacion(entidad.identificador, EstadoSincronizacion.ERROR)
-            ResultadoSincronizacion.ErrorReintentable
-        }
-
-        else -> {
-            dao.actualizarEstadoSincronizacion(entidad.identificador, EstadoSincronizacion.ERROR)
-            ResultadoSincronizacion.ErrorPermanente
-        }
+    /** Guarda siempre en el documento definido por el identificador local estable para evitar duplicaciones. */
+    private suspend fun sincronizarGuardado(
+        identificadorUsuario: String,
+        entidad: EntidadRecordatorio
+    ): ResultadoSincronizacion {
+        fuenteFirebase.guardarRecordatorio(identificadorUsuario, entidad.aModeloFirebase())
+        dao.confirmarSincronizacion(entidad.identificador, entidad.identificador)
+        return ResultadoSincronizacion.Exito
     }
 
     /** Confirma una eliminación remota antes de retirar definitivamente la fila local. */
-    private suspend fun sincronizarEliminacion(entidad: EntidadRecordatorio): ResultadoSincronizacion {
-        val identificadorRemoto = entidad.identificadorRemoto ?: run {
-            dao.eliminarDefinitivamente(entidad.identificador)
-            return ResultadoSincronizacion.Exito
-        }
-        val respuesta = servicioRemoto.eliminarRecordatorio(identificadorRemoto)
-        return when {
-            respuesta.isSuccessful || respuesta.code() == 404 -> {
-                dao.eliminarDefinitivamente(entidad.identificador)
-                ResultadoSincronizacion.Exito
-            }
-
-            respuesta.code() in 500..599 -> {
-                dao.actualizarEstadoSincronizacion(entidad.identificador, EstadoSincronizacion.ERROR)
-                ResultadoSincronizacion.ErrorReintentable
-            }
-
-            else -> {
-                dao.actualizarEstadoSincronizacion(entidad.identificador, EstadoSincronizacion.ERROR)
-                ResultadoSincronizacion.ErrorPermanente
-            }
-        }
+    private suspend fun sincronizarEliminacion(
+        identificadorUsuario: String,
+        entidad: EntidadRecordatorio
+    ): ResultadoSincronizacion {
+        fuenteFirebase.eliminarRecordatorio(identificadorUsuario, entidad.identificador)
+        dao.eliminarDefinitivamente(entidad.identificador)
+        return ResultadoSincronizacion.Exito
     }
 
-    /** Integra solamente cambios remotos ya asociados a un identificador local para evitar importar duplicados. */
-    private suspend fun actualizarCambiosRemotosExistentes(): ResultadoSincronizacion = try {
-        val respuesta = servicioRemoto.consultarRecordatorios()
-        when {
-            respuesta.isSuccessful -> {
-                respuesta.body().orEmpty().forEach { dto -> actualizarEntidadExistenteDesdeDto(dto) }
-                ResultadoSincronizacion.Exito
-            }
-
-            respuesta.code() in 500..599 -> ResultadoSincronizacion.ErrorReintentable
-            else -> ResultadoSincronizacion.ErrorPermanente
+    /** Integra los cambios de la cuenta autenticada en Room sin sobrescribir modificaciones locales pendientes. */
+    private suspend fun actualizarCambiosRemotos(identificadorUsuario: String): ResultadoSincronizacion = try {
+        fuenteFirebase.obtenerRecordatorios(identificadorUsuario).forEach { modeloFirebase ->
+            actualizarEntidadDesdeFirebase(modeloFirebase.aEntidadLocal())
         }
-    } catch (_: SocketTimeoutException) {
-        ResultadoSincronizacion.ErrorReintentable
-    } catch (_: IOException) {
+        ResultadoSincronizacion.Exito
+    } catch (error: FirebaseFirestoreException) {
+        if (error.esReintentable()) ResultadoSincronizacion.ErrorReintentable else ResultadoSincronizacion.ErrorPermanente
+    } catch (_: Exception) {
         ResultadoSincronizacion.ErrorReintentable
     }
 
-    /** Mapea el DTO antes de guardarlo en Room y conserva los campos locales que el servicio simulado no conoce. */
-    private suspend fun actualizarEntidadExistenteDesdeDto(dto: DtoRecordatorioRemoto) {
-        val identificadorRemoto = dto.id?.toString() ?: return
-        val entidadLocal = dao.obtenerPorIdentificadorRemoto(identificadorRemoto) ?: return
-        if (entidadLocal.estadoSincronizacion != EstadoSincronizacion.SINCRONIZADO) return
-        dao.guardar(
-            entidadLocal.copy(
-                titulo = dto.title,
-                estado = if (dto.completed) EstadoRecordatorio.Completado else EstadoRecordatorio.Pendiente,
-                actualizadoEn = System.currentTimeMillis()
-            )
-        )
+    /** Inserta una novedad cloud o actualiza una fila sincronizada sin reemplazar cambios locales más recientes. */
+    private suspend fun actualizarEntidadDesdeFirebase(entidadFirebase: EntidadRecordatorio) {
+        val entidadLocal = dao.obtenerPorIdentificador(entidadFirebase.identificador)
+        if (entidadLocal != null && entidadLocal.estadoSincronizacion != EstadoSincronizacion.SINCRONIZADO) return
+        // Conserva la versión local si ya posee una fecha más reciente que la copia cloud recibida.
+        if (entidadLocal != null && entidadLocal.actualizadoEn > entidadFirebase.actualizadoEn) return
+        dao.guardar(entidadFirebase)
+    }
+
+    /** Clasifica los errores transitorios para permitir que la interfaz conserve los datos locales y reintente. */
+    private fun FirebaseFirestoreException.esReintentable(): Boolean = when (code) {
+        FirebaseFirestoreException.Code.UNAVAILABLE,
+        FirebaseFirestoreException.Code.DEADLINE_EXCEEDED,
+        FirebaseFirestoreException.Code.ABORTED -> true
+        else -> false
     }
 }
 
@@ -224,12 +195,16 @@ object ContenedorDependencias {
     lateinit var repositorioPreferencias: RepositorioPreferencias
         private set
 
-    /** Expone el repositorio local-first que usa Room y el cliente Retrofit. */
+    /** Expone el repositorio local-first que usa Room, la identidad Firebase y Cloud Firestore. */
     lateinit var repositorioRecordatorios: RepositorioRecordatorios
         private set
 
     /** Expone la conectividad observada para que los ViewModel puedan solicitar sincronización al recuperarse la red. */
     lateinit var observadorConectividad: ObservadorConectividad
+        private set
+
+    /** Expone autenticación sin permitir que pantallas Compose creen instancias Firebase directamente. */
+    lateinit var repositorioAutenticacion: RepositorioAutenticacion
         private set
 
     /** Inicializa las instancias únicas usando el contexto de aplicación para evitar fugas de Activity. */
@@ -238,9 +213,13 @@ object ContenedorDependencias {
         baseDatos = BaseDatosRecordatorios.crear(contexto.applicationContext)
         repositorioPreferencias = RepositorioPreferencias(contexto.applicationContext.almacenPreferencias)
         observadorConectividad = ObservadorConectividad(contexto.applicationContext)
+        repositorioAutenticacion = RepositorioAutenticacionFirebase(
+            limpiarDatosLocales = { baseDatos.daoRecordatorios().eliminarTodos() }
+        )
         repositorioRecordatorios = RepositorioRecordatoriosLocalFirst(
             dao = baseDatos.daoRecordatorios(),
-            servicioRemoto = FabricaServicioRemoto.crear()
+            fuenteFirebase = FuenteRecordatoriosFirebase(),
+            proveedorIdentidad = ProveedorIdentidadFirebase()
         )
     }
 }

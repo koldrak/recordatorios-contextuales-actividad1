@@ -81,6 +81,7 @@ fun PantallaListaRecordatorios(
     onCrearRecordatorio: () -> Unit,
     onRecordatorioClick: (String) -> Unit,
     onAbrirConfiguracion: () -> Unit,
+    onCerrarSesion: () -> Unit,
     modifier: Modifier = Modifier,
     modeloVista: ModeloVistaListaRecordatorios = viewModel()
 ) {
@@ -92,7 +93,8 @@ fun PantallaListaRecordatorios(
         topBar = {
             BarraSuperiorListado(
                 onSincronizar = modeloVista::sincronizarRecordatorios,
-                onAbrirConfiguracion = onAbrirConfiguracion
+                onAbrirConfiguracion = onAbrirConfiguracion,
+                onCerrarSesion = onCerrarSesion
             )
         },
         floatingActionButton = {
@@ -136,6 +138,7 @@ fun PantallaListaRecordatorios(
 private fun BarraSuperiorListado(
     onSincronizar: () -> Unit,
     onAbrirConfiguracion: () -> Unit,
+    onCerrarSesion: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Conserva el estado del menú contextual mientras la pantalla permanece compuesta.
@@ -166,6 +169,13 @@ private fun BarraSuperiorListado(
                     onClick = {
                         menuVisible = false
                         onAbrirConfiguracion()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(text = stringResource(R.string.accion_cerrar_sesion)) },
+                    onClick = {
+                        menuVisible = false
+                        onCerrarSesion()
                     }
                 )
             }
@@ -643,6 +653,8 @@ private fun textoMensajeSincronizacion(mensaje: MensajeSincronizacion): String =
     MensajeSincronizacion.SINCRONIZACION_COMPLETA -> stringResource(R.string.sincronizacion_completa)
     MensajeSincronizacion.ERROR_REINTENTABLE -> stringResource(R.string.sincronizacion_error_reintentable)
     MensajeSincronizacion.ERROR_PERMANENTE -> stringResource(R.string.sincronizacion_error_permanente)
+    // Traduce el estado sin sesión en la interfaz sin que el ViewModel conozca recursos Android.
+    MensajeSincronizacion.ERROR_SIN_SESION -> stringResource(R.string.sincronizacion_error_sin_sesion)
 }
 
 /** Selecciona el recurso visible de cada criterio de orden persistido en DataStore. */

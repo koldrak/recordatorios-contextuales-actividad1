@@ -30,7 +30,9 @@ sealed interface EstadoListaRecordatorios {
 enum class MensajeSincronizacion {
     SINCRONIZACION_COMPLETA,
     ERROR_REINTENTABLE,
-    ERROR_PERMANENTE
+    ERROR_PERMANENTE,
+    // Representa la falta de identidad sin exponer Firebase ni mensajes dependientes del idioma al ViewModel.
+    ERROR_SIN_SESION
 }
 
 /** Distingue los errores de carga que requieren que la persona usuaria reintente la operación. */

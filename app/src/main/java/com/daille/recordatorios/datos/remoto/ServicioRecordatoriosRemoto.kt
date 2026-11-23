@@ -1,80 +1,86 @@
 package com.daille.recordatorios.datos.remoto
 
-import com.daille.recordatorios.BuildConfig
+import com.daille.recordatorios.datos.CatalogoCategorias
+import com.daille.recordatorios.datos.EstadoRecordatorio
+import com.daille.recordatorios.datos.EstadoSincronizacion
+import com.daille.recordatorios.datos.Prioridad
 import com.daille.recordatorios.datos.local.EntidadRecordatorio
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
-import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
-import retrofit2.Response
-import retrofit2.Retrofit
-import retrofit2.converter.moshi.MoshiConverterFactory
-import retrofit2.http.Body
-import retrofit2.http.DELETE
-import retrofit2.http.GET
-import retrofit2.http.POST
-import retrofit2.http.PUT
-import retrofit2.http.Path
-import java.util.concurrent.TimeUnit
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
 
-/** Representa el contrato JSON del servicio remoto y no se entrega directamente a Compose. */
-data class DtoRecordatorioRemoto(
-    val id: Long? = null,
-    val title: String,
-    val completed: Boolean = false,
-    val userId: Int = 1
+/** Representa el documento cloud y evita exponer entidades Room a Firebase. */
+data class ModeloRecordatorioFirebase(
+    val identificador: String = "",
+    val titulo: String = "",
+    val descripcion: String = "",
+    val categoriaIdentificador: String = "personal",
+    val prioridad: String = Prioridad.MEDIA.name,
+    val estado: String = "PENDIENTE",
+    val fechaProgramada: Long = 0L,
+    val actualizadoEn: Long = 0L
 )
 
-/** Declara las operaciones HTTP utilizadas por el repositorio durante la sincronización. */
-interface ServicioRecordatoriosRemoto {
-    /** Consulta recordatorios remotos cuando la aplicación necesita actualizar datos locales. */
-    @GET("todos")
-    suspend fun consultarRecordatorios(): Response<List<DtoRecordatorioRemoto>>
-
-    /** Envía un recordatorio local creado sin conexión o aún no sincronizado. */
-    @POST("todos")
-    suspend fun crearRecordatorio(@Body recordatorio: DtoRecordatorioRemoto): Response<DtoRecordatorioRemoto>
-
-    /** Actualiza un recordatorio remoto usando su identificador asignado por el servicio. */
-    @PUT("todos/{identificador}")
-    suspend fun actualizarRecordatorio(
-        @Path("identificador") identificador: String,
-        @Body recordatorio: DtoRecordatorioRemoto
-    ): Response<DtoRecordatorioRemoto>
-
-    /** Solicita la eliminación de un recordatorio que ya fue sincronizado previamente. */
-    @DELETE("todos/{identificador}")
-    suspend fun eliminarRecordatorio(@Path("identificador") identificador: String): Response<Unit>
-}
-
-/** Construye Retrofit y OkHttp en la capa de datos, fuera de las pantallas Compose. */
-object FabricaServicioRemoto {
-    /** Crea un servicio Retrofit con URL configurable y tiempos de espera controlados. */
-    fun crear(): ServicioRecordatoriosRemoto {
-        val registroHttp = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
-        }
-        val cliente = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .writeTimeout(10, TimeUnit.SECONDS)
-            .addInterceptor(registroHttp)
-            .build()
-        val moshi = Moshi.Builder()
-            .addLast(KotlinJsonAdapterFactory())
-            .build()
-        return Retrofit.Builder()
-            .baseUrl(BuildConfig.URL_BASE_SERVICIO)
-            .client(cliente)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-            .create(ServicioRecordatoriosRemoto::class.java)
+/** Encapsula las rutas y operaciones de Cloud Firestore dentro de la capa de datos. */
+class FuenteRecordatoriosFirebase(
+    // La instancia se obtiene al ejecutar una operación para que la app local abra aun sin google-services.json.
+    private val obtenerFirestore: () -> FirebaseFirestore = { FirebaseFirestore.getInstance() }
+) {
+    /** Guarda o actualiza el mismo documento estable dentro de users/uid/reminders/reminderId. */
+    suspend fun guardarRecordatorio(
+        identificadorUsuario: String,
+        recordatorio: ModeloRecordatorioFirebase
+    ) {
+        coleccionRecordatorios(identificadorUsuario)
+            .document(recordatorio.identificador)
+            .set(recordatorio)
+            .await()
     }
+
+    /** Elimina el documento remoto después de que el repositorio haya marcado la eliminación local. */
+    suspend fun eliminarRecordatorio(identificadorUsuario: String, identificadorRecordatorio: String) {
+        coleccionRecordatorios(identificadorUsuario)
+            .document(identificadorRecordatorio)
+            .delete()
+            .await()
+    }
+
+    /** Recupera los documentos de una sola cuenta para evitar consultas globales de recordatorios. */
+    suspend fun obtenerRecordatorios(identificadorUsuario: String): List<ModeloRecordatorioFirebase> =
+        coleccionRecordatorios(identificadorUsuario)
+            .get()
+            .await()
+            .documents
+            .mapNotNull { documento -> documento.toObject(ModeloRecordatorioFirebase::class.java) }
+
+    /** Construye la ruta privada de Firestore con el uid autenticado y no con un valor recibido desde Compose. */
+    private fun coleccionRecordatorios(identificadorUsuario: String) = obtenerFirestore()
+        .collection("users")
+        .document(identificadorUsuario)
+        .collection("reminders")
 }
 
-/** Convierte una entidad local al contrato mínimo utilizado por el servicio remoto simulado. */
-fun EntidadRecordatorio.aDtoRemoto(): DtoRecordatorioRemoto = DtoRecordatorioRemoto(
-    id = identificadorRemoto?.toLongOrNull(),
-    title = titulo,
-    completed = estado.codigoPersistente == "COMPLETADO"
+/** Convierte la entidad persistida en Room al documento que se transmite a Firestore. */
+fun EntidadRecordatorio.aModeloFirebase(): ModeloRecordatorioFirebase = ModeloRecordatorioFirebase(
+    identificador = identificador,
+    titulo = titulo,
+    descripcion = descripcion,
+    categoriaIdentificador = categoriaIdentificador,
+    prioridad = prioridad.name,
+    estado = estado.codigoPersistente,
+    fechaProgramada = fechaProgramada,
+    actualizadoEn = actualizadoEn
+)
+
+/** Convierte un documento Firestore en una entidad local sincronizada sin trasladar el modelo cloud a Compose. */
+fun ModeloRecordatorioFirebase.aEntidadLocal(): EntidadRecordatorio = EntidadRecordatorio(
+    identificador = identificador,
+    identificadorRemoto = identificador,
+    titulo = titulo,
+    descripcion = descripcion,
+    categoriaIdentificador = CatalogoCategorias.obtenerCategoria(categoriaIdentificador).identificador,
+    prioridad = runCatching { Prioridad.valueOf(prioridad) }.getOrDefault(Prioridad.MEDIA),
+    estado = EstadoRecordatorio.desdeCodigo(estado),
+    fechaProgramada = fechaProgramada,
+    actualizadoEn = actualizadoEn,
+    estadoSincronizacion = EstadoSincronizacion.SINCRONIZADO
 )

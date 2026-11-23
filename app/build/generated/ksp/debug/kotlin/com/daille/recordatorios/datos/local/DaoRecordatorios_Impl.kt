@@ -589,6 +589,18 @@ public class DaoRecordatorios_Impl(
     }
   }
 
+  public override suspend fun eliminarTodos() {
+    val _sql: String = "DELETE FROM recordatorios"
+    return performSuspending(__db, false, true) { _connection ->
+      val _stmt: SQLiteStatement = _connection.prepare(_sql)
+      try {
+        _stmt.step()
+      } finally {
+        _stmt.close()
+      }
+    }
+  }
+
   public companion object {
     public fun getRequiredConverters(): List<KClass<*>> = emptyList()
   }

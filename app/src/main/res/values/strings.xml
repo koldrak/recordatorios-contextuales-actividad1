@@ -52,6 +52,8 @@
     <string name="sincronizacion_completa">Los cambios locales se sincronizaron correctamente.</string>
     <string name="sincronizacion_error_reintentable">No se pudo sincronizar. Los cambios locales se conservan para reintentar.</string>
     <string name="sincronizacion_error_permanente">El servicio rechazó la sincronización. Revisá los datos e intentá nuevamente.</string>
+    <!-- Explica que la sincronización cloud requiere una identidad autenticada sin mencionar detalles internos. -->
+    <string name="sincronizacion_error_sin_sesion">Iniciá sesión para sincronizar tus recordatorios.</string>
     <string name="marcar_completado">Marcar como completado</string>
     <string name="marcar_pendiente">Marcar como pendiente</string>
     <string name="titulo_configuracion">Configuración</string>
@@ -62,4 +64,18 @@
     <string name="orden_fecha">Fecha</string>
     <string name="orden_prioridad">Prioridad</string>
     <string name="texto_preferencias_persistentes">Estas preferencias se guardan y se aplican nuevamente al abrir la aplicación.</string>
+    <string name="autenticacion_comprobando_sesion">Comprobando sesión…</string>
+    <string name="autenticacion_registro">Crear cuenta</string>
+    <string name="autenticacion_inicio">Iniciar sesión</string>
+    <string name="autenticacion_correo">Correo electrónico</string>
+    <string name="autenticacion_contrasena">Contraseña</string>
+    <string name="autenticacion_registrar">Registrarme</string>
+    <string name="autenticacion_ingresar">Ingresar</string>
+    <string name="autenticacion_ir_inicio">Ya tengo una cuenta</string>
+    <string name="autenticacion_ir_registro">Crear una cuenta</string>
+    <string name="autenticacion_error_campos">Ingresá un correo válido y una contraseña de al menos seis caracteres.</string>
+    <string name="autenticacion_error_credenciales">No fue posible validar las credenciales.</string>
+    <string name="autenticacion_error_configuracion">Firebase no está configurado correctamente en esta aplicación.</string>
+    <string name="autenticacion_error_desconocido">Ocurrió un error al procesar la autenticación.</string>
+    <string name="accion_cerrar_sesion">Cerrar sesión</string>
 </resources>

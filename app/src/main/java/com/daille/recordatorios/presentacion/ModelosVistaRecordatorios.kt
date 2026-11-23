@@ -95,6 +95,8 @@ class ModeloVistaListaRecordatorios(
                 ResultadoSincronizacion.Exito -> MensajeSincronizacion.SINCRONIZACION_COMPLETA
                 ResultadoSincronizacion.ErrorReintentable -> MensajeSincronizacion.ERROR_REINTENTABLE
                 ResultadoSincronizacion.ErrorPermanente -> MensajeSincronizacion.ERROR_PERMANENTE
+                // Comunica el requisito de autenticación mediante un estado de presentación neutral al proveedor.
+                ResultadoSincronizacion.ErrorSinSesion -> MensajeSincronizacion.ERROR_SIN_SESION
             }
             sincronizacionEnCurso = false
             publicarListado()

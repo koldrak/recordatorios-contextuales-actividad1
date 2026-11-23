@@ -52,6 +52,8 @@
     <string name="sincronizacion_completa">Local changes were synchronized successfully.</string>
     <string name="sincronizacion_error_reintentable">Could not synchronize. Local changes are preserved to retry.</string>
     <string name="sincronizacion_error_permanente">The service rejected the synchronization. Review the data and try again.</string>
+    <!-- Provides the same cloud synchronization guidance for the English version of the app. -->
+    <string name="sincronizacion_error_sin_sesion">Sign in to synchronize your reminders.</string>
     <string name="marcar_completado">Mark as completed</string>
     <string name="marcar_pendiente">Mark as pending</string>
     <string name="titulo_configuracion">Settings</string>
@@ -62,4 +64,18 @@
     <string name="orden_fecha">Date</string>
     <string name="orden_prioridad">Priority</string>
     <string name="texto_preferencias_persistentes">These preferences are saved and applied again when opening the app.</string>
+    <string name="autenticacion_comprobando_sesion">Checking session…</string>
+    <string name="autenticacion_registro">Create account</string>
+    <string name="autenticacion_inicio">Sign in</string>
+    <string name="autenticacion_correo">Email address</string>
+    <string name="autenticacion_contrasena">Password</string>
+    <string name="autenticacion_registrar">Register</string>
+    <string name="autenticacion_ingresar">Sign in</string>
+    <string name="autenticacion_ir_inicio">I already have an account</string>
+    <string name="autenticacion_ir_registro">Create an account</string>
+    <string name="autenticacion_error_campos">Enter a valid email address and a password with at least six characters.</string>
+    <string name="autenticacion_error_credenciales">The credentials could not be validated.</string>
+    <string name="autenticacion_error_configuracion">Firebase is not configured correctly in this application.</string>
+    <string name="autenticacion_error_desconocido">An error occurred while processing authentication.</string>
+    <string name="accion_cerrar_sesion">Sign out</string>
 </resources>
