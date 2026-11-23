@@ -2,137 +2,167 @@ package com.daille.recordatorios.presentacion
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.daille.recordatorios.datos.CatalogoCategorias
 import com.daille.recordatorios.datos.ContenedorDependencias
-import com.daille.recordatorios.datos.FuenteRecordatoriosSimulados
+import com.daille.recordatorios.datos.EstadoRecordatorio
 import com.daille.recordatorios.datos.Prioridad
 import com.daille.recordatorios.datos.Recordatorio
 import com.daille.recordatorios.datos.RepositorioRecordatorios
+import com.daille.recordatorios.datos.ResultadoSincronizacion
+import com.daille.recordatorios.datos.preferencias.CriterioOrdenamiento
+import com.daille.recordatorios.datos.preferencias.PreferenciasAplicacion
+import com.daille.recordatorios.datos.preferencias.RepositorioPreferencias
+import com.daille.recordatorios.datos.red.ObservadorConectividad
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
+import java.util.UUID
 
-/** Identifica las validaciones posibles sin acoplar la lógica a un idioma de la interfaz. */
-enum class ErrorValidacionFormulario {
-    TITULO_CORTO,
-    DESCRIPCION_LARGA,
-    CATEGORIA_INVALIDA,
-    PRIORIDAD_NO_SELECCIONADA
-}
-
-/** Administra el estado y los eventos de la pantalla de listado. */
+/** Administra el listado local y aplica las preferencias persistentes sin que Compose acceda a Room. */
 class ModeloVistaListaRecordatorios(
-    private val repositorio: RepositorioRecordatorios = ContenedorDependencias.repositorioRecordatorios
+    private val repositorioRecordatorios: RepositorioRecordatorios = ContenedorDependencias.repositorioRecordatorios,
+    private val repositorioPreferencias: RepositorioPreferencias = ContenedorDependencias.repositorioPreferencias,
+    private val observadorConectividad: ObservadorConectividad = ContenedorDependencias.observadorConectividad
 ) : ViewModel() {
-    /** Guarda internamente el estado modificable del listado. */
+    /** Conserva el estado mutable dentro del ViewModel y expone solo una versión de lectura a Compose. */
     private val estadoMutable = MutableStateFlow<EstadoListaRecordatorios>(EstadoListaRecordatorios.Cargando)
 
-    /** Expone una vista de solo lectura para que la interfaz observe el estado. */
+    /** Entrega el estado observable del listado con conciencia del ciclo de vida en la interfaz. */
     val estado: StateFlow<EstadoListaRecordatorios> = estadoMutable.asStateFlow()
 
-    /** Indica que la interfaz está mostrando una simulación y no debe reemplazarse por el flujo real. */
-    private var estadoSimulado = false
+    /** Guarda la última lista de Room para recalcular filtros, orden y mensajes de sincronización. */
+    private var recordatoriosLocales: List<Recordatorio> = emptyList()
 
-    /** Evita reemplazar el estado de carga inicial antes de que la consulta simulada finalice. */
-    private var cargaInicialFinalizada = false
+    /** Guarda las preferencias actuales recibidas desde DataStore. */
+    private var preferenciasActuales = PreferenciasAplicacion()
+
+    /** Evita iniciar una segunda sincronización mientras la primera continúa en ejecución. */
+    private var sincronizacionEnCurso = false
+
+    /** Conserva el resultado de la última sincronización para mostrar un mensaje recuperable. */
+    private var mensajeSincronizacion: MensajeSincronizacion? = null
 
     init {
-        // Inicia la carga al crear el ViewModel para separar la lógica de la función componible.
-        observarCambiosRepositorio()
-        cargarRecordatorios()
+        // Combina Room y DataStore; cualquier cambio en ambos actualiza el estado visible automáticamente.
+        observarDatosLocales()
+        observarRecuperacionDeRed()
     }
 
-    /** Consulta el repositorio y representa carga, contenido, vacío o error según el resultado. */
-    fun cargarRecordatorios() {
-        estadoSimulado = false
-        cargaInicialFinalizada = false
-        estadoMutable.value = EstadoListaRecordatorios.Cargando
+    /** Solicita una sincronización al recuperar Internet sin iniciar operaciones duplicadas. */
+    private fun observarRecuperacionDeRed() {
         viewModelScope.launch {
-            runCatching { repositorio.obtenerRecordatorios() }
-                .onSuccess { recordatorios ->
-                    cargaInicialFinalizada = true
-                    publicarRecordatorios(recordatorios)
-                }
-                .onFailure {
+            observadorConectividad.observarConectividad()
+                .distinctUntilChanged()
+                .collect { hayConexion -> if (hayConexion) sincronizarRecordatorios() }
+        }
+    }
+
+    /** Observa el flujo local y las preferencias persistentes sin bloquear la interfaz. */
+    private fun observarDatosLocales() {
+        viewModelScope.launch {
+            combine(
+                repositorioRecordatorios.observarRecordatorios(),
+                repositorioPreferencias.preferencias
+            ) { recordatorios, preferencias -> recordatorios to preferencias }
+                .catch {
                     estadoMutable.value = EstadoListaRecordatorios.Error(ErrorListaRecordatorios.CARGA)
                 }
+                .collect { (recordatorios, preferencias) ->
+                    recordatoriosLocales = recordatorios
+                    preferenciasActuales = preferencias
+                    publicarListado()
+                }
         }
     }
 
-    /** Expone un estado de error temporal para comprobar el mensaje y la acción de reintento. */
-    fun simularEstadoError() {
-        estadoSimulado = true
-        estadoMutable.value = EstadoListaRecordatorios.Error(ErrorListaRecordatorios.SIMULADO)
+    /** Solicita sincronizar las operaciones pendientes y conserva Room visible mientras se procesa la red. */
+    fun sincronizarRecordatorios() {
+        if (sincronizacionEnCurso) return
+        sincronizacionEnCurso = true
+        mensajeSincronizacion = null
+        publicarListado()
+        viewModelScope.launch {
+            mensajeSincronizacion = when (repositorioRecordatorios.sincronizar()) {
+                ResultadoSincronizacion.Exito -> MensajeSincronizacion.SINCRONIZACION_COMPLETA
+                ResultadoSincronizacion.ErrorReintentable -> MensajeSincronizacion.ERROR_REINTENTABLE
+                ResultadoSincronizacion.ErrorPermanente -> MensajeSincronizacion.ERROR_PERMANENTE
+            }
+            sincronizacionEnCurso = false
+            publicarListado()
+        }
     }
 
-    /** Escucha los cambios del repositorio para actualizar el listado después de guardar y volver atrás. */
-    private fun observarCambiosRepositorio() {
-        viewModelScope.launch {
-            repositorio.observarRecordatorios().collect { recordatorios ->
-                if (cargaInicialFinalizada && !estadoSimulado) {
-                    publicarRecordatorios(recordatorios)
+    /** Elimina un registro desde el repositorio; Room actualizará el listado mediante Flow. */
+    fun eliminarRecordatorio(identificador: String) {
+        viewModelScope.launch { repositorioRecordatorios.eliminarRecordatorio(identificador) }
+    }
+
+    /** Filtra tareas completadas y ordena el resultado usando exclusivamente los valores recibidos de DataStore. */
+    private fun publicarListado() {
+        val filtrados = recordatoriosLocales
+            .filter { recordatorio -> preferenciasActuales.mostrarCompletados || recordatorio.estado != EstadoRecordatorio.Completado }
+            .let { recordatorios ->
+                when (preferenciasActuales.criterioOrdenamiento) {
+                    CriterioOrdenamiento.FECHA -> recordatorios.sortedBy { recordatorio -> recordatorio.fechaProgramada }
+                    CriterioOrdenamiento.PRIORIDAD -> recordatorios.sortedBy { recordatorio -> recordatorio.prioridad.ordinal }
                 }
             }
-        }
-    }
-
-    /** Convierte la lista del repositorio en el estado visible correspondiente. */
-    private fun publicarRecordatorios(recordatorios: List<Recordatorio>) {
-        estadoMutable.value = if (recordatorios.isEmpty()) {
-            EstadoListaRecordatorios.Vacio
+        estadoMutable.value = if (filtrados.isEmpty()) {
+            EstadoListaRecordatorios.Vacio(preferenciasActuales)
         } else {
-            EstadoListaRecordatorios.ConDatos(recordatorios)
-        }
-    }
-
-    /** Elimina un registro mediante el repositorio; el StateFlow actualizará la lista resultante. */
-    fun eliminarRecordatorio(identificador: Int) {
-        viewModelScope.launch {
-            repositorio.eliminarRecordatorio(identificador)
+            EstadoListaRecordatorios.ConDatos(
+                recordatorios = filtrados,
+                preferencias = preferenciasActuales,
+                sincronizando = sincronizacionEnCurso,
+                mensajeSincronizacion = mensajeSincronizacion
+            )
         }
     }
 }
 
-/** Administra los campos, validaciones y guardado del formulario de creación. */
+/** Administra los campos y validaciones del formulario antes de crear un registro persistente. */
 class ModeloVistaFormularioRecordatorio(
-    private val repositorio: RepositorioRecordatorios = ContenedorDependencias.repositorioRecordatorios
+    private val repositorioRecordatorios: RepositorioRecordatorios = ContenedorDependencias.repositorioRecordatorios
 ) : ViewModel() {
-    /** Conserva la versión modificable del formulario dentro del ViewModel. */
+    /** Conserva la información modificable del formulario dentro del ViewModel. */
     private val estadoMutable = MutableStateFlow(EstadoFormularioRecordatorio())
 
-    /** Expone el estado inmutable que la pantalla observa mediante StateFlow. */
+    /** Expone una versión de solo lectura para que Compose represente los campos. */
     val estado: StateFlow<EstadoFormularioRecordatorio> = estadoMutable.asStateFlow()
 
-    /** Solicita que el siguiente intento de guardado termine con un error para fines de verificación. */
-    private var forzarErrorGuardado = false
-
-    /** Actualiza y valida el título ingresado por la persona usuaria. */
+    /** Actualiza y valida el título sin eliminar el texto ingresado por la persona usuaria. */
     fun cambiarTitulo(nuevoTitulo: String) {
         actualizarYValidar { estadoActual -> estadoActual.copy(titulo = nuevoTitulo, guardadoConExito = false) }
     }
 
-    /** Actualiza y valida la descripción ingresada por la persona usuaria. */
+    /** Actualiza y valida la descripción sin superar el límite establecido por la actividad. */
     fun cambiarDescripcion(nuevaDescripcion: String) {
         actualizarYValidar { estadoActual -> estadoActual.copy(descripcion = nuevaDescripcion, guardadoConExito = false) }
     }
 
-    /** Selecciona una categoría y verifica que pertenezca a las opciones permitidas. */
+    /** Selecciona solo categorías incluidas en el catálogo permitido. */
     fun seleccionarCategoria(identificadorCategoria: String) {
-        val categoria = FuenteRecordatoriosSimulados.categoriasDisponibles.find { elemento ->
-            elemento.identificador == identificadorCategoria
+        val categoria = CatalogoCategorias.categoriasDisponibles.find { categoria ->
+            categoria.identificador == identificadorCategoria
         }
         actualizarYValidar { estadoActual -> estadoActual.copy(categoria = categoria, guardadoConExito = false) }
     }
 
-    /** Selecciona una prioridad para el nuevo recordatorio. */
+    /** Conserva la prioridad seleccionada para el nuevo registro. */
     fun seleccionarPrioridad(nuevaPrioridad: Prioridad) {
         actualizarYValidar { estadoActual -> estadoActual.copy(prioridad = nuevaPrioridad, guardadoConExito = false) }
     }
 
-    /** Valida el formulario y guarda un nuevo registro mediante una operación asincrónica. */
+    /** Crea el recordatorio en Room primero y marca el registro como pendiente de sincronización. */
     fun guardarRecordatorio() {
         actualizarYValidar { estadoActual -> estadoActual }
         val estadoActual = estadoMutable.value
@@ -141,20 +171,19 @@ class ModeloVistaFormularioRecordatorio(
         estadoMutable.update { estadoFormulario -> estadoFormulario.copy(enviando = true, errorGeneral = null) }
         viewModelScope.launch {
             runCatching {
-                if (forzarErrorGuardado) {
-                    forzarErrorGuardado = false
-                    delay(550)
-                    throw IllegalStateException("Error de guardado simulado")
-                }
-                val siguienteIdentificador = (repositorio.obtenerRecordatorios().maxOfOrNull { it.identificador } ?: 0) + 1
-                Recordatorio(
-                    identificador = siguienteIdentificador,
-                    tituloPersonalizado = estadoActual.titulo.trim(),
-                    descripcionPersonalizada = estadoActual.descripcion.trim(),
-                    categoria = checkNotNull(estadoActual.categoria),
-                    prioridad = checkNotNull(estadoActual.prioridad),
-                    estado = com.daille.recordatorios.datos.EstadoRecordatorio.Pendiente
-                ).also { recordatorio -> repositorio.guardarRecordatorio(recordatorio) }
+                val momentoActual = System.currentTimeMillis()
+                repositorioRecordatorios.crearRecordatorio(
+                    Recordatorio(
+                        identificador = UUID.randomUUID().toString(),
+                        titulo = estadoActual.titulo.trim(),
+                        descripcion = estadoActual.descripcion.trim(),
+                        categoria = checkNotNull(estadoActual.categoria),
+                        prioridad = checkNotNull(estadoActual.prioridad),
+                        estado = EstadoRecordatorio.Pendiente,
+                        fechaProgramada = momentoActual,
+                        actualizadoEn = momentoActual
+                    )
+                )
             }.onSuccess {
                 estadoMutable.update { estadoFormulario ->
                     estadoFormulario.copy(enviando = false, guardadoConExito = true)
@@ -167,59 +196,82 @@ class ModeloVistaFormularioRecordatorio(
         }
     }
 
-    /** Ejecuta un envío que finaliza con error para comprobar el mensaje general del formulario. */
-    fun simularErrorDeGuardado() {
-        forzarErrorGuardado = true
-        guardarRecordatorio()
-    }
-
-    /** Restablece el resultado de éxito una vez que la pantalla procesa la navegación de regreso. */
+    /** Consume la señal de éxito después de que la pantalla ejecuta la navegación de regreso. */
     fun consumirGuardadoExitoso() {
         estadoMutable.update { estadoFormulario -> estadoFormulario.copy(guardadoConExito = false) }
     }
 
-    /** Actualiza el formulario creando una nueva instancia y calculando todos los errores de validación. */
+    /** Produce una nueva instancia de UiState con los errores correspondientes a cada campo. */
     private fun actualizarYValidar(transformacion: (EstadoFormularioRecordatorio) -> EstadoFormularioRecordatorio) {
         estadoMutable.update { estadoAnterior ->
             val estadoNuevo = transformacion(estadoAnterior)
             estadoNuevo.copy(
                 errorTitulo = if (estadoNuevo.titulo.trim().length < 4) ErrorValidacionFormulario.TITULO_CORTO else null,
                 errorDescripcion = if (estadoNuevo.descripcion.length > 200) ErrorValidacionFormulario.DESCRIPCION_LARGA else null,
-                errorCategoria = if (
-                    estadoNuevo.categoria == null ||
-                    estadoNuevo.categoria !in FuenteRecordatoriosSimulados.categoriasDisponibles
-                ) {
-                    ErrorValidacionFormulario.CATEGORIA_INVALIDA
-                } else {
-                    null
-                },
-                errorPrioridad = if (estadoNuevo.prioridad == null) {
-                    ErrorValidacionFormulario.PRIORIDAD_NO_SELECCIONADA
-                } else {
-                    null
-                }
+                errorCategoria = if (estadoNuevo.categoria == null) ErrorValidacionFormulario.CATEGORIA_INVALIDA else null,
+                errorPrioridad = if (estadoNuevo.prioridad == null) ErrorValidacionFormulario.PRIORIDAD_NO_SELECCIONADA else null
             )
         }
     }
 }
 
-/** Recupera el registro que debe mostrarse en la pantalla de detalle. */
+/** Observa un recordatorio de Room para mostrar el detalle y permitir cambiar su estado sin perder persistencia. */
 class ModeloVistaDetalleRecordatorio(
-    private val repositorio: RepositorioRecordatorios = ContenedorDependencias.repositorioRecordatorios
+    private val repositorioRecordatorios: RepositorioRecordatorios = ContenedorDependencias.repositorioRecordatorios
 ) : ViewModel() {
-    /** Almacena el resultado de buscar el identificador recibido por navegación. */
+    /** Conserva el detalle mutable dentro del ViewModel. */
     private val estadoMutable = MutableStateFlow<EstadoDetalleRecordatorio>(EstadoDetalleRecordatorio.Cargando)
 
-    /** Expone un flujo de solo lectura para que la pantalla represente el detalle. */
+    /** Expone el detalle como StateFlow de solo lectura. */
     val estado: StateFlow<EstadoDetalleRecordatorio> = estadoMutable.asStateFlow()
 
-    /** Busca el registro indicado y actualiza el estado con una alternativa mutuamente excluyente. */
-    fun cargarDetalle(identificador: Int) {
+    /** Evita acumular recolectores si la misma pantalla recibe otro identificador. */
+    private var trabajoDetalle: Job? = null
+
+    /** Observa el registro seleccionado y actualiza la pantalla si Room modifica sus datos. */
+    fun cargarDetalle(identificador: String) {
+        trabajoDetalle?.cancel()
         estadoMutable.value = EstadoDetalleRecordatorio.Cargando
-        viewModelScope.launch {
-            estadoMutable.value = repositorio.obtenerRecordatorio(identificador)?.let { recordatorio ->
-                EstadoDetalleRecordatorio.Disponible(recordatorio)
-            } ?: EstadoDetalleRecordatorio.NoEncontrado
+        trabajoDetalle = viewModelScope.launch {
+            repositorioRecordatorios.observarRecordatorio(identificador).collect { recordatorio ->
+                estadoMutable.value = recordatorio?.let { EstadoDetalleRecordatorio.Disponible(it) }
+                    ?: EstadoDetalleRecordatorio.NoEncontrado
+            }
         }
+    }
+
+    /** Alterna entre Pendiente y Completado y deja la modificación lista para sincronizarse. */
+    fun alternarCompletado(recordatorio: Recordatorio) {
+        val nuevoEstado = if (recordatorio.estado == EstadoRecordatorio.Completado) {
+            EstadoRecordatorio.Pendiente
+        } else {
+            EstadoRecordatorio.Completado
+        }
+        viewModelScope.launch { repositorioRecordatorios.actualizarEstado(recordatorio.identificador, nuevoEstado) }
+    }
+}
+
+/** Observa y actualiza las preferencias persistentes desde una pantalla separada de ajustes. */
+class ModeloVistaConfiguracion(
+    private val repositorioPreferencias: RepositorioPreferencias = ContenedorDependencias.repositorioPreferencias
+) : ViewModel() {
+    /** Convierte el Flow de DataStore en StateFlow para que Compose respete el ciclo de vida al observarlo. */
+    val estado: StateFlow<EstadoConfiguracion> = repositorioPreferencias.preferencias
+        .let { preferencias -> kotlinx.coroutines.flow.flow { preferencias.collect { emit(EstadoConfiguracion(it, false)) } } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EstadoConfiguracion())
+
+    /** Guarda el tema solicitado desde una coroutine del ViewModel. */
+    fun cambiarModoOscuro(activado: Boolean) {
+        viewModelScope.launch { repositorioPreferencias.guardarModoOscuro(activado) }
+    }
+
+    /** Guarda si el listado debe mostrar los recordatorios completados. */
+    fun cambiarMostrarCompletados(mostrar: Boolean) {
+        viewModelScope.launch { repositorioPreferencias.guardarMostrarCompletados(mostrar) }
+    }
+
+    /** Guarda el criterio con el que el listado ordena los datos locales. */
+    fun cambiarCriterioOrdenamiento(criterio: CriterioOrdenamiento) {
+        viewModelScope.launch { repositorioPreferencias.guardarCriterioOrdenamiento(criterio) }
     }
 }

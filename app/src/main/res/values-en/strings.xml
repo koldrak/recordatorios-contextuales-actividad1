@@ -12,6 +12,10 @@
     <string name="estado_pendiente">Pending</string>
     <string name="estado_completado">Completed</string>
     <string name="estado_vencido">Overdue</string>
+    <string name="sincronizacion_sincronizado">Synchronized</string>
+    <string name="sincronizacion_pendiente">Pending synchronization</string>
+    <string name="sincronizacion_pendiente_eliminacion">Pending deletion</string>
+    <string name="sincronizacion_error">Synchronization error</string>
     <string name="agregar_recordatorio">Add reminder</string>
     <string name="crear_recordatorio">Create reminder</string>
     <string name="detalle_recordatorio">Reminder detail</string>
@@ -40,4 +44,22 @@
     <string name="error_guardado">The reminder could not be saved.</string>
     <string name="simular_error_guardado">Simulate save error</string>
     <string name="detalle_aviso">Reminder: %1$s</string>
+    <string name="fecha_recordatorio">Date: %1$s</string>
+    <string name="accion_sincronizar">Synchronize</string>
+    <string name="accion_configuracion">Settings</string>
+    <string name="descripcion_menu_acciones">Open app actions</string>
+    <string name="sincronizando_recordatorios">Synchronizing pending changes…</string>
+    <string name="sincronizacion_completa">Local changes were synchronized successfully.</string>
+    <string name="sincronizacion_error_reintentable">Could not synchronize. Local changes are preserved to retry.</string>
+    <string name="sincronizacion_error_permanente">The service rejected the synchronization. Review the data and try again.</string>
+    <string name="marcar_completado">Mark as completed</string>
+    <string name="marcar_pendiente">Mark as pending</string>
+    <string name="titulo_configuracion">Settings</string>
+    <string name="cargando_preferencias">Loading preferences</string>
+    <string name="modo_oscuro">Use dark mode</string>
+    <string name="mostrar_completados">Show completed reminders</string>
+    <string name="ordenar_por">Sort list by</string>
+    <string name="orden_fecha">Date</string>
+    <string name="orden_prioridad">Priority</string>
+    <string name="texto_preferencias_persistentes">These preferences are saved and applied again when opening the app.</string>
 </resources>

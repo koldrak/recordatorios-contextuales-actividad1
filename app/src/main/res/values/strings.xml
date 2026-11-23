@@ -12,6 +12,10 @@
     <string name="estado_pendiente">Pendiente</string>
     <string name="estado_completado">Completado</string>
     <string name="estado_vencido">Vencido</string>
+    <string name="sincronizacion_sincronizado">Sincronizado</string>
+    <string name="sincronizacion_pendiente">Pendiente de sincronización</string>
+    <string name="sincronizacion_pendiente_eliminacion">Eliminación pendiente</string>
+    <string name="sincronizacion_error">Error de sincronización</string>
     <string name="agregar_recordatorio">Agregar recordatorio</string>
     <string name="crear_recordatorio">Crear recordatorio</string>
     <string name="detalle_recordatorio">Detalle del recordatorio</string>
@@ -40,4 +44,22 @@
     <string name="error_guardado">No fue posible guardar el recordatorio.</string>
     <string name="simular_error_guardado">Simular error de guardado</string>
     <string name="detalle_aviso">Aviso: %1$s</string>
+    <string name="fecha_recordatorio">Fecha: %1$s</string>
+    <string name="accion_sincronizar">Sincronizar</string>
+    <string name="accion_configuracion">Configuración</string>
+    <string name="descripcion_menu_acciones">Abrir acciones de la aplicación</string>
+    <string name="sincronizando_recordatorios">Sincronizando cambios pendientes…</string>
+    <string name="sincronizacion_completa">Los cambios locales se sincronizaron correctamente.</string>
+    <string name="sincronizacion_error_reintentable">No se pudo sincronizar. Los cambios locales se conservan para reintentar.</string>
+    <string name="sincronizacion_error_permanente">El servicio rechazó la sincronización. Revisá los datos e intentá nuevamente.</string>
+    <string name="marcar_completado">Marcar como completado</string>
+    <string name="marcar_pendiente">Marcar como pendiente</string>
+    <string name="titulo_configuracion">Configuración</string>
+    <string name="cargando_preferencias">Cargando preferencias</string>
+    <string name="modo_oscuro">Usar modo oscuro</string>
+    <string name="mostrar_completados">Mostrar recordatorios completados</string>
+    <string name="ordenar_por">Ordenar listado por</string>
+    <string name="orden_fecha">Fecha</string>
+    <string name="orden_prioridad">Prioridad</string>
+    <string name="texto_preferencias_persistentes">Estas preferencias se guardan y se aplican nuevamente al abrir la aplicación.</string>
 </resources>

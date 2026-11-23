@@ -1,8 +1,20 @@
+// Importa la clase que permite leer pares clave-valor desde el archivo de configuración local.
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
+
+// Lee una URL local opcional sin exigir ni almacenar secretos dentro del código fuente.
+val propiedadesServicio = Properties()
+val archivoServicio = rootProject.file("servicio.properties")
+if (archivoServicio.exists()) {
+    archivoServicio.inputStream().use { flujo -> propiedadesServicio.load(flujo) }
+}
+val urlBaseServicio = propiedadesServicio.getProperty("URL_BASE_SERVICIO") ?: "https://jsonplaceholder.typicode.com/"
 
 android {
     namespace = "com.daille.recordatorios"
@@ -19,6 +31,8 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Expone la URL configurada para Retrofit sin incluir secretos en el código fuente.
+        buildConfigField("String", "URL_BASE_SERVICIO", "\"$urlBaseServicio\"")
     }
 
     buildTypes {
@@ -39,7 +53,14 @@ android {
     }
     buildFeatures {
         compose = true
+        // Permite exponer la URL pública del servicio remoto sin incluir secretos en el código.
+        buildConfig = true
     }
+}
+
+// Solicita a Room el directorio donde se exportan los esquemas de la base de datos.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -54,6 +75,15 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.moshi)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
+    implementation(libs.moshi.kotlin)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

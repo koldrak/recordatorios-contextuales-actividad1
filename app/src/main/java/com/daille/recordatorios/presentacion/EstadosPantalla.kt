@@ -3,29 +3,42 @@ package com.daille.recordatorios.presentacion
 import com.daille.recordatorios.datos.Categoria
 import com.daille.recordatorios.datos.Prioridad
 import com.daille.recordatorios.datos.Recordatorio
+import com.daille.recordatorios.datos.preferencias.CriterioOrdenamiento
+import com.daille.recordatorios.datos.preferencias.PreferenciasAplicacion
 
-/** Representa los estados excluyentes que puede mostrar el listado de recordatorios. */
+/** Representa alternativas excluyentes para el contenido principal del listado. */
 sealed interface EstadoListaRecordatorios {
-    /** Indica que la aplicación está obteniendo datos del repositorio. */
+    /** Indica que Room o DataStore todavía están entregando la primera emisión. */
     data object Cargando : EstadoListaRecordatorios
 
-    /** Indica que no existen recordatorios disponibles todavía. */
-    data object Vacio : EstadoListaRecordatorios
+    /** Comunica que la base local no contiene recordatorios visibles y permite crear uno. */
+    data class Vacio(val preferencias: PreferenciasAplicacion) : EstadoListaRecordatorios
 
-    /** Contiene la información disponible para mostrar en la lista. */
-    data class ConDatos(val recordatorios: List<Recordatorio>) : EstadoListaRecordatorios
+    /** Contiene datos locales disponibles y el estado de una sincronización opcional. */
+    data class ConDatos(
+        val recordatorios: List<Recordatorio>,
+        val preferencias: PreferenciasAplicacion,
+        val sincronizando: Boolean = false,
+        val mensajeSincronizacion: MensajeSincronizacion? = null
+    ) : EstadoListaRecordatorios
 
-    /** Comunica un error recuperable y un mensaje comprensible para la persona usuaria. */
+    /** Comunica un error recuperable sin reemplazar datos locales previamente disponibles. */
     data class Error(val motivo: ErrorListaRecordatorios) : EstadoListaRecordatorios
 }
 
-/** Distingue los mensajes de error del listado para que la interfaz los localice en cada idioma. */
-enum class ErrorListaRecordatorios {
-    CARGA,
-    SIMULADO
+/** Identifica mensajes de sincronización que Compose traduce mediante recursos localizados. */
+enum class MensajeSincronizacion {
+    SINCRONIZACION_COMPLETA,
+    ERROR_REINTENTABLE,
+    ERROR_PERMANENTE
 }
 
-/** Reúne los valores y resultados del formulario de creación de un recordatorio. */
+/** Distingue los errores de carga que requieren que la persona usuaria reintente la operación. */
+enum class ErrorListaRecordatorios {
+    CARGA
+}
+
+/** Reúne los valores y errores del formulario antes de crear un nuevo registro persistente. */
 data class EstadoFormularioRecordatorio(
     val titulo: String = "",
     val descripcion: String = "",
@@ -39,27 +52,44 @@ data class EstadoFormularioRecordatorio(
     val guardadoConExito: Boolean = false,
     val errorGeneral: ErrorGeneralFormulario? = null
 ) {
-    /** Determina si todos los datos requeridos son válidos antes de habilitar el guardado. */
+    /** Verifica que el botón Guardar solo se habilite cuando la información es válida. */
     val esValido: Boolean
-        get() = titulo.trim().length >= 4 &&
-            descripcion.length <= 200 &&
-            categoria != null &&
-            prioridad != null
+        get() = titulo.trim().length >= 4 && descripcion.length <= 200 && categoria != null && prioridad != null
 }
 
-/** Identifica un fallo general de guardado sin incluir texto dependiente de un idioma. */
+/** Identifica una validación del formulario sin guardar textos dependientes de un idioma en el ViewModel. */
+enum class ErrorValidacionFormulario {
+    TITULO_CORTO,
+    DESCRIPCION_LARGA,
+    CATEGORIA_INVALIDA,
+    PRIORIDAD_NO_SELECCIONADA
+}
+
+/** Identifica un error recuperable al persistir un recordatorio en la capa de datos. */
 enum class ErrorGeneralFormulario {
     GUARDADO
 }
 
-/** Representa el estado de la pantalla de detalle según la disponibilidad del registro solicitado. */
+/** Representa la pantalla de detalle según el resultado del Flow de Room. */
 sealed interface EstadoDetalleRecordatorio {
-    /** Indica que se está buscando el registro solicitado. */
+    /** Informa que el detalle todavía espera el registro solicitado. */
     data object Cargando : EstadoDetalleRecordatorio
 
-    /** Contiene el recordatorio encontrado para mostrar sus datos completos. */
+    /** Contiene el recordatorio local que puede consultarse o actualizarse. */
     data class Disponible(val recordatorio: Recordatorio) : EstadoDetalleRecordatorio
 
-    /** Informa que no se encontró el identificador recibido por navegación. */
+    /** Informa que no existe una fila visible con el identificador recibido. */
     data object NoEncontrado : EstadoDetalleRecordatorio
 }
+
+/** Conserva las preferencias leídas desde DataStore para la pantalla de ajustes. */
+data class EstadoConfiguracion(
+    val preferencias: PreferenciasAplicacion = PreferenciasAplicacion(),
+    val cargando: Boolean = true
+)
+
+/** Expone los valores de orden disponibles en la interfaz sin filtrar datos directamente en Compose. */
+val criteriosDisponibles: List<CriterioOrdenamiento> = listOf(
+    CriterioOrdenamiento.FECHA,
+    CriterioOrdenamiento.PRIORIDAD
+)

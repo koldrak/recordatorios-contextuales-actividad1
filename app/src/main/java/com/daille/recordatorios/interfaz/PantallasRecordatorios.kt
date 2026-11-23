@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -45,66 +46,76 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.daille.recordatorios.R
-import com.daille.recordatorios.datos.Categoria
+import com.daille.recordatorios.datos.CatalogoCategorias
 import com.daille.recordatorios.datos.EstadoRecordatorio
-import com.daille.recordatorios.datos.FuenteRecordatoriosSimulados
+import com.daille.recordatorios.datos.EstadoSincronizacion
 import com.daille.recordatorios.datos.Prioridad
 import com.daille.recordatorios.datos.Recordatorio
+import com.daille.recordatorios.datos.preferencias.CriterioOrdenamiento
 import com.daille.recordatorios.presentacion.ErrorGeneralFormulario
 import com.daille.recordatorios.presentacion.ErrorListaRecordatorios
 import com.daille.recordatorios.presentacion.ErrorValidacionFormulario
+import com.daille.recordatorios.presentacion.EstadoConfiguracion
 import com.daille.recordatorios.presentacion.EstadoDetalleRecordatorio
 import com.daille.recordatorios.presentacion.EstadoFormularioRecordatorio
 import com.daille.recordatorios.presentacion.EstadoListaRecordatorios
+import com.daille.recordatorios.presentacion.MensajeSincronizacion
+import com.daille.recordatorios.presentacion.ModeloVistaConfiguracion
 import com.daille.recordatorios.presentacion.ModeloVistaDetalleRecordatorio
 import com.daille.recordatorios.presentacion.ModeloVistaFormularioRecordatorio
 import com.daille.recordatorios.presentacion.ModeloVistaListaRecordatorios
+import com.daille.recordatorios.presentacion.criteriosDisponibles
+import java.text.DateFormat
+import java.util.Date
 
-/** Asocia las categorías con colores consistentes para facilitar su reconocimiento en toda la aplicación. */
+/** Asocia categorías con colores constantes para complementar, sin reemplazar, sus etiquetas de texto. */
 private val coloresPorCategoria: Map<String, Color> = mapOf(
     "estudio" to Color(0xFF6750A4),
     "trabajo" to Color(0xFF006C4C),
     "personal" to Color(0xFFB3261E)
 )
 
-/** Presenta el listado y delega las acciones al ViewModel mediante callbacks claros. */
+/** Muestra los recordatorios persistidos en Room y comunica eventos mediante callbacks al ViewModel. */
 @Composable
 fun PantallaListaRecordatorios(
     onCrearRecordatorio: () -> Unit,
-    onRecordatorioClick: (Int) -> Unit,
+    onRecordatorioClick: (String) -> Unit,
+    onAbrirConfiguracion: () -> Unit,
     modifier: Modifier = Modifier,
     modeloVista: ModeloVistaListaRecordatorios = viewModel()
 ) {
-    // Observa el StateFlow respetando el ciclo de vida de la pantalla.
+    // Observa el StateFlow sin recolectar datos cuando el destino no está activo.
     val estado = modeloVista.estado.collectAsStateWithLifecycle().value
 
     Scaffold(
         modifier = modifier,
         topBar = {
             BarraSuperiorListado(
-                onSimularError = modeloVista::simularEstadoError,
-                onRecargar = modeloVista::cargarRecordatorios
+                onSincronizar = modeloVista::sincronizarRecordatorios,
+                onAbrirConfiguracion = onAbrirConfiguracion
             )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onCrearRecordatorio) {
-                Text(text = "+")
+                Text(text = "+", style = MaterialTheme.typography.headlineSmall)
             }
         }
     ) { rellenoInterno ->
         when (estado) {
-            EstadoListaRecordatorios.Cargando -> ContenidoEstado(
+            EstadoListaRecordatorios.Cargando -> ContenidoCentrado(
                 mensaje = stringResource(R.string.cargando_recordatorios),
                 rellenoInterno = rellenoInterno
             )
 
-            EstadoListaRecordatorios.Vacio -> ContenidoVacio(
+            is EstadoListaRecordatorios.Vacio -> ContenidoVacio(
                 rellenoInterno = rellenoInterno,
                 onCrearRecordatorio = onCrearRecordatorio
             )
 
             is EstadoListaRecordatorios.ConDatos -> ListaRecordatorios(
                 recordatorios = estado.recordatorios,
+                sincronizando = estado.sincronizando,
+                mensajeSincronizacion = estado.mensajeSincronizacion,
                 rellenoInterno = rellenoInterno,
                 onRecordatorioClick = onRecordatorioClick,
                 onEliminarRecordatorio = modeloVista::eliminarRecordatorio
@@ -113,55 +124,48 @@ fun PantallaListaRecordatorios(
             is EstadoListaRecordatorios.Error -> ContenidoError(
                 motivo = estado.motivo,
                 rellenoInterno = rellenoInterno,
-                onReintentar = modeloVista::cargarRecordatorios
+                onReintentar = modeloVista::sincronizarRecordatorios
             )
         }
     }
 }
 
-/** Muestra en un menú las acciones de simulación necesarias para comprobar los estados requeridos por la actividad. */
+/** Reúne sincronización y ajustes en un menú para mantener limpia la barra superior. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BarraSuperiorListado(
-    onSimularError: () -> Unit,
-    onRecargar: () -> Unit,
+    onSincronizar: () -> Unit,
+    onAbrirConfiguracion: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Conserva si el menú contextual de estados se encuentra abierto o cerrado.
-    var menuEstadosVisible by remember { mutableStateOf(false) }
-    // Obtiene el texto localizado antes del bloque semántico, que no es componible.
-    val descripcionMenuEstados = stringResource(R.string.descripcion_menu_estados)
+    // Conserva el estado del menú contextual mientras la pantalla permanece compuesta.
+    var menuVisible by remember { mutableStateOf(false) }
+    val descripcionMenu = stringResource(R.string.descripcion_menu_acciones)
 
     TopAppBar(
         modifier = modifier,
         title = { Text(text = stringResource(R.string.titulo_pantalla)) },
         actions = {
-            // Agrupa las acciones auxiliares para mantener una barra superior limpia.
-            IconButton(onClick = { menuEstadosVisible = true }) {
+            IconButton(onClick = { menuVisible = true }) {
                 Text(
                     text = "⋮",
                     style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.semantics {
-                        contentDescription = descripcionMenuEstados
-                    }
+                    modifier = Modifier.semantics { contentDescription = descripcionMenu }
                 )
             }
-            DropdownMenu(
-                expanded = menuEstadosVisible,
-                onDismissRequest = { menuEstadosVisible = false }
-            ) {
+            DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
                 DropdownMenuItem(
-                    text = { Text(text = stringResource(R.string.accion_error)) },
+                    text = { Text(text = stringResource(R.string.accion_sincronizar)) },
                     onClick = {
-                        menuEstadosVisible = false
-                        onSimularError()
+                        menuVisible = false
+                        onSincronizar()
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text(text = stringResource(R.string.accion_recargar)) },
+                    text = { Text(text = stringResource(R.string.accion_configuracion)) },
                     onClick = {
-                        menuEstadosVisible = false
-                        onRecargar()
+                        menuVisible = false
+                        onAbrirConfiguracion()
                     }
                 )
             }
@@ -169,19 +173,19 @@ private fun BarraSuperiorListado(
     )
 }
 
-/** Representa la lista desplazable de recordatorios disponibles. */
+/** Dibuja el listado observado desde Room y un aviso no bloqueante sobre el resultado de sincronización. */
 @Composable
 private fun ListaRecordatorios(
     recordatorios: List<Recordatorio>,
+    sincronizando: Boolean,
+    mensajeSincronizacion: MensajeSincronizacion?,
     rellenoInterno: PaddingValues,
-    onRecordatorioClick: (Int) -> Unit,
-    onEliminarRecordatorio: (Int) -> Unit,
+    onRecordatorioClick: (String) -> Unit,
+    onEliminarRecordatorio: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(rellenoInterno),
+        modifier = modifier.fillMaxSize().padding(rellenoInterno),
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -192,7 +196,13 @@ private fun ListaRecordatorios(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        items(items = recordatorios, key = { recordatorio -> recordatorio.identificador }) { recordatorio ->
+        if (sincronizando) {
+            item { TextoSincronizacion(stringResource(R.string.sincronizando_recordatorios)) }
+        }
+        mensajeSincronizacion?.let { mensaje ->
+            item { TextoSincronizacion(textoMensajeSincronizacion(mensaje)) }
+        }
+        items(recordatorios, key = { recordatorio -> recordatorio.identificador }) { recordatorio ->
             TarjetaRecordatorio(
                 recordatorio = recordatorio,
                 onClick = { onRecordatorioClick(recordatorio.identificador) },
@@ -202,14 +212,24 @@ private fun ListaRecordatorios(
     }
 }
 
-/** Representa un aviso mientras se carga contenido o no existe una pantalla especializada. */
+/** Comunica un estado de sincronización mediante texto además de conservar los datos visibles. */
 @Composable
-private fun ContenidoEstado(mensaje: String, rellenoInterno: PaddingValues, modifier: Modifier = Modifier) {
+private fun TextoSincronizacion(texto: String, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Text(
+            text = texto,
+            modifier = Modifier.padding(12.dp),
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+/** Presenta un mensaje mientras se obtienen los datos persistidos o un detalle aún no disponible. */
+@Composable
+private fun ContenidoCentrado(mensaje: String, rellenoInterno: PaddingValues, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(rellenoInterno)
-            .padding(24.dp),
+        modifier = modifier.fillMaxSize().padding(rellenoInterno).padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -217,7 +237,7 @@ private fun ContenidoEstado(mensaje: String, rellenoInterno: PaddingValues, modi
     }
 }
 
-/** Comunica que todavía no hay datos y ofrece una acción para iniciar su creación. */
+/** Comunica que Room no tiene registros visibles y ofrece iniciar el flujo de creación. */
 @Composable
 private fun ContenidoVacio(
     rellenoInterno: PaddingValues,
@@ -225,10 +245,7 @@ private fun ContenidoVacio(
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(rellenoInterno)
-            .padding(24.dp),
+        modifier = modifier.fillMaxSize().padding(rellenoInterno).padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -239,7 +256,7 @@ private fun ContenidoVacio(
     }
 }
 
-/** Presenta un error visible, con texto y una acción de reintento accesible. */
+/** Muestra un error de carga separado del estado vacío y ofrece un reintento explícito. */
 @Composable
 private fun ContenidoError(
     motivo: ErrorListaRecordatorios,
@@ -248,10 +265,7 @@ private fun ContenidoError(
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(rellenoInterno)
-            .padding(24.dp),
+        modifier = modifier.fillMaxSize().padding(rellenoInterno).padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -262,7 +276,7 @@ private fun ContenidoError(
     }
 }
 
-/** Dibuja una tarjeta reutilizable y comunica la selección o eliminación mediante lambdas. */
+/** Representa un recordatorio reutilizable con acceso al detalle y una acción de eliminación persistente. */
 @Composable
 fun TarjetaRecordatorio(
     recordatorio: Recordatorio,
@@ -273,46 +287,44 @@ fun TarjetaRecordatorio(
     val colorCategoria = coloresPorCategoria[recordatorio.categoria.identificador] ?: MaterialTheme.colorScheme.primary
     val descripcionEliminar = stringResource(R.string.descripcion_eliminar_recordatorio)
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            // Separa la acción destructiva para impedir que abra el detalle al tocar el ícono.
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = textoTitulo(recordatorio),
+                    text = recordatorio.titulo,
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 IconButton(onClick = onEliminar) {
-                    Text(
-                        text = "🗑",
-                        modifier = Modifier.semantics { contentDescription = descripcionEliminar }
-                    )
+                    Text(text = "🗑", modifier = Modifier.semantics { contentDescription = descripcionEliminar })
                 }
             }
-            FilaEtiquetas(recordatorio = recordatorio, colorCategoria = colorCategoria)
+            FilaEtiquetas(recordatorio, colorCategoria)
+            Text(
+                text = stringResource(R.string.fecha_recordatorio, formatearFecha(recordatorio.fechaProgramada)),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
 
-/** Agrupa las etiquetas visuales de categoría, prioridad y estado. */
+/** Agrupa etiquetas de categoría, prioridad, estado y sincronización para que su significado no dependa del color. */
 @Composable
 private fun FilaEtiquetas(recordatorio: Recordatorio, colorCategoria: Color, modifier: Modifier = Modifier) {
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Etiqueta(texto = stringResource(recordatorio.categoria.recursoNombre), color = colorCategoria)
-        Etiqueta(texto = stringResource(recordatorio.prioridad.recursoNombre), color = colorPrioridad(recordatorio.prioridad))
-        Etiqueta(texto = stringResource(recordatorio.estado.recursoNombre), color = colorEstado(recordatorio.estado))
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Etiqueta(stringResource(recordatorio.categoria.recursoNombre), colorCategoria)
+            Etiqueta(stringResource(recordatorio.prioridad.recursoNombre), colorPrioridad(recordatorio.prioridad))
+            Etiqueta(stringResource(recordatorio.estado.recursoNombre), colorEstado(recordatorio.estado))
+        }
+        Etiqueta(stringResource(recordatorio.estadoSincronizacion.recursoNombre), colorSincronizacion(recordatorio.estadoSincronizacion))
     }
 }
 
-/** Muestra una etiqueta de texto cuyo significado no depende solamente de su color. */
+/** Muestra una etiqueta de texto acompañada por un color semántico. */
 @Composable
 private fun Etiqueta(texto: String, color: Color, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, color = color.copy(alpha = 0.16f), shape = MaterialTheme.shapes.small) {
@@ -326,7 +338,7 @@ private fun Etiqueta(texto: String, color: Color, modifier: Modifier = Modifier)
     }
 }
 
-/** Muestra el formulario controlado y comunica guardar, cancelar y cambio de campos al ViewModel. */
+/** Presenta el formulario que crea el registro en Room antes de cualquier sincronización remota. */
 @Composable
 fun PantallaCrearRecordatorio(
     onGuardar: () -> Unit,
@@ -350,13 +362,12 @@ fun PantallaCrearRecordatorio(
             onCategoriaChange = modeloVista::seleccionarCategoria,
             onPrioridadChange = modeloVista::seleccionarPrioridad,
             onGuardar = modeloVista::guardarRecordatorio,
-            onSimularErrorGuardado = modeloVista::simularErrorDeGuardado,
             onCancelar = onCancelar
         )
     }
 }
 
-/** Construye los campos validados, las selecciones y las acciones del formulario. */
+/** Construye los controles validados y comunica sus eventos al ViewModel mediante funciones recibidas. */
 @Composable
 private fun FormularioRecordatorio(
     estado: EstadoFormularioRecordatorio,
@@ -366,24 +377,16 @@ private fun FormularioRecordatorio(
     onCategoriaChange: (String) -> Unit,
     onPrioridadChange: (Prioridad) -> Unit,
     onGuardar: () -> Unit,
-    onSimularErrorGuardado: () -> Unit,
     onCancelar: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(rellenoInterno),
+        modifier = modifier.fillMaxSize().padding(rellenoInterno),
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            CampoTextoValidado(
-                etiqueta = stringResource(R.string.etiqueta_titulo),
-                valor = estado.titulo,
-                errorValidacion = estado.errorTitulo,
-                onValorChange = onTituloChange
-            )
+            CampoTextoValidado(stringResource(R.string.etiqueta_titulo), estado.titulo, estado.errorTitulo, onTituloChange)
         }
         item {
             CampoTextoValidado(
@@ -395,43 +398,30 @@ private fun FormularioRecordatorio(
             )
         }
         item {
-            Text(text = stringResource(R.string.etiqueta_categoria), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.etiqueta_categoria), style = MaterialTheme.typography.titleSmall)
             SelectorCategoria(estado.categoria?.identificador, onCategoriaChange, estado.errorCategoria)
         }
         item {
-            Text(text = stringResource(R.string.etiqueta_prioridad), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.etiqueta_prioridad), style = MaterialTheme.typography.titleSmall)
             SelectorPrioridad(estado.prioridad, onPrioridadChange, estado.errorPrioridad)
         }
         estado.errorGeneral?.let { errorGeneral ->
-            item { Text(text = textoErrorGeneral(errorGeneral), color = MaterialTheme.colorScheme.error) }
+            item { Text(textoErrorGeneral(errorGeneral), color = MaterialTheme.colorScheme.error) }
         }
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = onCancelar, modifier = Modifier.weight(1f), enabled = !estado.enviando) {
-                    Text(text = stringResource(R.string.cancelar))
+                    Text(stringResource(R.string.cancelar))
                 }
-                Button(
-                    onClick = onGuardar,
-                    modifier = Modifier.weight(1f),
-                    enabled = estado.esValido && !estado.enviando
-                ) {
-                    Text(text = stringResource(if (estado.enviando) R.string.guardando else R.string.guardar))
+                Button(onClick = onGuardar, modifier = Modifier.weight(1f), enabled = estado.esValido && !estado.enviando) {
+                    Text(stringResource(if (estado.enviando) R.string.guardando else R.string.guardar))
                 }
-            }
-        }
-        item {
-            TextButton(
-                onClick = onSimularErrorGuardado,
-                enabled = estado.esValido && !estado.enviando,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = stringResource(R.string.simular_error_guardado))
             }
         }
     }
 }
 
-/** Representa un campo de texto controlado con error visible y semántico cuando la validación falla. */
+/** Representa un campo controlado con errores visibles y semánticos para tecnologías de asistencia. */
 @Composable
 private fun CampoTextoValidado(
     etiqueta: String,
@@ -441,21 +431,19 @@ private fun CampoTextoValidado(
     lineasMinimas: Int = 1,
     modifier: Modifier = Modifier
 ) {
-    val textoError = errorValidacion?.let { textoErrorValidacion(it) }
+    val textoError = errorValidacion?.let { errorActual -> textoErrorValidacion(errorActual) }
     OutlinedTextField(
         value = valor,
         onValueChange = onValorChange,
-        modifier = modifier
-            .fillMaxWidth()
-            .semantics { textoError?.let { mensaje -> error(mensaje) } },
-        label = { Text(text = etiqueta) },
-        supportingText = { textoError?.let { mensaje -> Text(text = mensaje) } },
+        modifier = modifier.fillMaxWidth().semantics { textoError?.let { mensaje -> error(mensaje) } },
+        label = { Text(etiqueta) },
+        supportingText = { textoError?.let { mensaje -> Text(mensaje) } },
         isError = textoError != null,
         minLines = lineasMinimas
     )
 }
 
-/** Permite seleccionar una categoría válida mediante componentes controlados. */
+/** Permite seleccionar únicamente categorías disponibles en el catálogo de dominio. */
 @Composable
 private fun SelectorCategoria(
     categoriaSeleccionada: String?,
@@ -463,23 +451,22 @@ private fun SelectorCategoria(
     errorValidacion: ErrorValidacionFormulario?,
     modifier: Modifier = Modifier
 ) {
-    // Resuelve el texto antes de configurar la semántica, porque la lambda semántica no es componible.
     val textoError = errorValidacion?.let { errorActual -> textoErrorValidacion(errorActual) }
     Column(modifier = modifier.semantics { textoError?.let { mensaje -> error(mensaje) } }) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FuenteRecordatoriosSimulados.categoriasDisponibles.forEach { categoria ->
+            CatalogoCategorias.categoriasDisponibles.forEach { categoria ->
                 FilterChip(
                     selected = categoria.identificador == categoriaSeleccionada,
                     onClick = { onCategoriaChange(categoria.identificador) },
-                    label = { Text(text = stringResource(categoria.recursoNombre)) }
+                    label = { Text(stringResource(categoria.recursoNombre)) }
                 )
             }
         }
-        textoError?.let { mensaje -> Text(text = mensaje, color = MaterialTheme.colorScheme.error) }
+        textoError?.let { mensaje -> Text(mensaje, color = MaterialTheme.colorScheme.error) }
     }
 }
 
-/** Permite seleccionar una prioridad y comunica el valor seleccionado mediante una lambda. */
+/** Permite seleccionar una prioridad y comunica el valor al ViewModel sin conservar estado local. */
 @Composable
 private fun SelectorPrioridad(
     prioridadSeleccionada: Prioridad?,
@@ -487,7 +474,6 @@ private fun SelectorPrioridad(
     errorValidacion: ErrorValidacionFormulario?,
     modifier: Modifier = Modifier
 ) {
-    // Resuelve el texto antes de configurar la semántica, porque la lambda semántica no es componible.
     val textoError = errorValidacion?.let { errorActual -> textoErrorValidacion(errorActual) }
     Column(modifier = modifier.semantics { textoError?.let { mensaje -> error(mensaje) } }) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -495,18 +481,18 @@ private fun SelectorPrioridad(
                 FilterChip(
                     selected = prioridad == prioridadSeleccionada,
                     onClick = { onPrioridadChange(prioridad) },
-                    label = { Text(text = stringResource(prioridad.recursoNombre)) }
+                    label = { Text(stringResource(prioridad.recursoNombre)) }
                 )
             }
         }
-        textoError?.let { mensaje -> Text(text = mensaje, color = MaterialTheme.colorScheme.error) }
+        textoError?.let { mensaje -> Text(mensaje, color = MaterialTheme.colorScheme.error) }
     }
 }
 
-/** Muestra la información completa del recordatorio seleccionado mediante su identificador. */
+/** Muestra y observa el detalle de un registro persistido, incluso cuando Room lo actualiza. */
 @Composable
 fun PantallaDetalleRecordatorio(
-    identificador: Int,
+    identificador: String,
     onVolver: () -> Unit,
     modifier: Modifier = Modifier,
     modeloVista: ModeloVistaDetalleRecordatorio = viewModel()
@@ -515,103 +501,177 @@ fun PantallaDetalleRecordatorio(
     LaunchedEffect(identificador) { modeloVista.cargarDetalle(identificador) }
     Scaffold(modifier = modifier, topBar = { BarraSuperiorSimple(R.string.detalle_recordatorio, onVolver) }) { rellenoInterno ->
         when (estado) {
-            EstadoDetalleRecordatorio.Cargando -> ContenidoEstado(
-                mensaje = stringResource(R.string.cargando_recordatorios),
-                rellenoInterno = rellenoInterno
-            )
-            EstadoDetalleRecordatorio.NoEncontrado -> ContenidoEstado(
-                mensaje = stringResource(R.string.recordatorio_no_encontrado),
-                rellenoInterno = rellenoInterno
-            )
+            EstadoDetalleRecordatorio.Cargando -> ContenidoCentrado(stringResource(R.string.cargando_recordatorios), rellenoInterno)
+            EstadoDetalleRecordatorio.NoEncontrado -> ContenidoCentrado(stringResource(R.string.recordatorio_no_encontrado), rellenoInterno)
             is EstadoDetalleRecordatorio.Disponible -> ContenidoDetalle(
                 recordatorio = estado.recordatorio,
-                rellenoInterno = rellenoInterno
+                rellenoInterno = rellenoInterno,
+                onAlternarCompletado = { modeloVista.alternarCompletado(estado.recordatorio) }
             )
         }
     }
 }
 
-/** Organiza los datos completos de un registro seleccionado en una vista legible. */
+/** Organiza la información completa y permite modificar el estado de una fila guardada en Room. */
 @Composable
-private fun ContenidoDetalle(recordatorio: Recordatorio, rellenoInterno: PaddingValues, modifier: Modifier = Modifier) {
+private fun ContenidoDetalle(
+    recordatorio: Recordatorio,
+    rellenoInterno: PaddingValues,
+    onAlternarCompletado: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(rellenoInterno)
-            .padding(20.dp),
+        modifier = modifier.fillMaxSize().padding(rellenoInterno).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = textoTitulo(recordatorio), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(text = textoDescripcion(recordatorio), style = MaterialTheme.typography.bodyLarge)
-        FilaEtiquetas(
-            recordatorio = recordatorio,
-            colorCategoria = coloresPorCategoria[recordatorio.categoria.identificador] ?: MaterialTheme.colorScheme.primary
-        )
-        recordatorio.aviso?.let { aviso ->
-            Text(
-                text = stringResource(R.string.detalle_aviso, stringResource(aviso.recursoMensaje)),
-                style = MaterialTheme.typography.bodyMedium
-            )
+        Text(recordatorio.titulo, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(recordatorio.descripcion, style = MaterialTheme.typography.bodyLarge)
+        FilaEtiquetas(recordatorio, coloresPorCategoria[recordatorio.categoria.identificador] ?: MaterialTheme.colorScheme.primary)
+        Text(stringResource(R.string.fecha_recordatorio, formatearFecha(recordatorio.fechaProgramada)))
+        Button(onClick = onAlternarCompletado) {
+            val recurso = if (recordatorio.estado == EstadoRecordatorio.Completado) R.string.marcar_pendiente else R.string.marcar_completado
+            Text(stringResource(recurso))
         }
     }
 }
 
-/** Muestra una barra superior reutilizable que ofrece regresar al destino anterior. */
+/** Permite modificar las tres preferencias requeridas y comprobar que DataStore las mantiene entre sesiones. */
+@Composable
+fun PantallaConfiguracion(
+    onVolver: () -> Unit,
+    modifier: Modifier = Modifier,
+    modeloVista: ModeloVistaConfiguracion = viewModel()
+) {
+    val estado = modeloVista.estado.collectAsStateWithLifecycle().value
+    Scaffold(modifier = modifier, topBar = { BarraSuperiorSimple(R.string.titulo_configuracion, onVolver) }) { rellenoInterno ->
+        ContenidoConfiguracion(
+            estado = estado,
+            rellenoInterno = rellenoInterno,
+            onModoOscuroChange = modeloVista::cambiarModoOscuro,
+            onMostrarCompletadosChange = modeloVista::cambiarMostrarCompletados,
+            onCriterioChange = modeloVista::cambiarCriterioOrdenamiento
+        )
+    }
+}
+
+/** Representa controles que escriben preferencias mediante callbacks suspendidos por el ViewModel. */
+@Composable
+private fun ContenidoConfiguracion(
+    estado: EstadoConfiguracion,
+    rellenoInterno: PaddingValues,
+    onModoOscuroChange: (Boolean) -> Unit,
+    onMostrarCompletadosChange: (Boolean) -> Unit,
+    onCriterioChange: (CriterioOrdenamiento) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (estado.cargando) {
+        ContenidoCentrado(stringResource(R.string.cargando_preferencias), rellenoInterno, modifier)
+        return
+    }
+    Column(
+        modifier = modifier.fillMaxSize().padding(rellenoInterno).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        FilaInterruptor(
+            titulo = stringResource(R.string.modo_oscuro),
+            activo = estado.preferencias.modoOscuro,
+            onCambio = onModoOscuroChange
+        )
+        FilaInterruptor(
+            titulo = stringResource(R.string.mostrar_completados),
+            activo = estado.preferencias.mostrarCompletados,
+            onCambio = onMostrarCompletadosChange
+        )
+        Text(stringResource(R.string.ordenar_por), style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            criteriosDisponibles.forEach { criterio ->
+                FilterChip(
+                    selected = criterio == estado.preferencias.criterioOrdenamiento,
+                    onClick = { onCriterioChange(criterio) },
+                    label = { Text(stringResource(recursoCriterio(criterio))) }
+                )
+            }
+        }
+        Text(stringResource(R.string.texto_preferencias_persistentes), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Agrupa un texto y su interruptor para que la preferencia sea comprensible y accesible. */
+@Composable
+private fun FilaInterruptor(titulo: String, activo: Boolean, onCambio: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(titulo, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = activo, onCheckedChange = onCambio)
+    }
+}
+
+/** Muestra una barra reutilizable que solicita volver sin conocer el NavController. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BarraSuperiorSimple(titulo: Int, onVolver: () -> Unit, modifier: Modifier = Modifier) {
     TopAppBar(
         modifier = modifier,
-        title = { Text(text = stringResource(titulo)) },
-        navigationIcon = {
-            TextButton(onClick = onVolver) { Text(text = stringResource(R.string.volver)) }
-        }
+        title = { Text(stringResource(titulo)) },
+        navigationIcon = { TextButton(onClick = onVolver) { Text(stringResource(R.string.volver)) } }
     )
 }
 
-/** Obtiene el título localizado o el texto escrito durante la creación del recordatorio. */
+/** Traduce las validaciones de dominio a recursos de texto visibles para la interfaz actual. */
 @Composable
-private fun textoTitulo(recordatorio: Recordatorio): String =
-    recordatorio.recursoTitulo?.let { recurso -> stringResource(recurso) } ?: recordatorio.tituloPersonalizado.orEmpty()
-
-/** Obtiene la descripción localizada o el texto escrito durante la creación del recordatorio. */
-@Composable
-private fun textoDescripcion(recordatorio: Recordatorio): String =
-    recordatorio.recursoDescripcion?.let { recurso -> stringResource(recurso) }
-        ?: recordatorio.descripcionPersonalizada.orEmpty()
-
-/** Traduce cada error de validación sin colocar textos dependientes del idioma dentro del ViewModel. */
-@Composable
-private fun textoErrorValidacion(error: ErrorValidacionFormulario): String = when (error) {
+private fun textoErrorValidacion(errorValidacion: ErrorValidacionFormulario): String = when (errorValidacion) {
     ErrorValidacionFormulario.TITULO_CORTO -> stringResource(R.string.error_titulo_corto)
     ErrorValidacionFormulario.DESCRIPCION_LARGA -> stringResource(R.string.error_descripcion_larga)
     ErrorValidacionFormulario.CATEGORIA_INVALIDA -> stringResource(R.string.error_categoria)
     ErrorValidacionFormulario.PRIORIDAD_NO_SELECCIONADA -> stringResource(R.string.error_prioridad)
 }
 
-/** Traduce el motivo de error del listado para la interfaz actual. */
+/** Traduce el error de persistencia sin colocar textos dependientes de idioma en el ViewModel. */
 @Composable
-private fun textoErrorLista(error: ErrorListaRecordatorios): String = when (error) {
-    ErrorListaRecordatorios.CARGA -> stringResource(R.string.error_carga)
-    ErrorListaRecordatorios.SIMULADO -> stringResource(R.string.error_simulado)
-}
-
-/** Traduce el error general ocurrido durante el guardado. */
-@Composable
-private fun textoErrorGeneral(error: ErrorGeneralFormulario): String = when (error) {
+private fun textoErrorGeneral(errorGeneral: ErrorGeneralFormulario): String = when (errorGeneral) {
     ErrorGeneralFormulario.GUARDADO -> stringResource(R.string.error_guardado)
 }
 
-/** Devuelve un color semántico para cada nivel de prioridad. */
+/** Traduce un error de carga recuperable. */
+@Composable
+private fun textoErrorLista(errorLista: ErrorListaRecordatorios): String = when (errorLista) {
+    ErrorListaRecordatorios.CARGA -> stringResource(R.string.error_carga)
+}
+
+/** Traduce el resultado de sincronización preservando la separación entre lógica y recursos visuales. */
+@Composable
+private fun textoMensajeSincronizacion(mensaje: MensajeSincronizacion): String = when (mensaje) {
+    MensajeSincronizacion.SINCRONIZACION_COMPLETA -> stringResource(R.string.sincronizacion_completa)
+    MensajeSincronizacion.ERROR_REINTENTABLE -> stringResource(R.string.sincronizacion_error_reintentable)
+    MensajeSincronizacion.ERROR_PERMANENTE -> stringResource(R.string.sincronizacion_error_permanente)
+}
+
+/** Selecciona el recurso visible de cada criterio de orden persistido en DataStore. */
+private fun recursoCriterio(criterio: CriterioOrdenamiento): Int = when (criterio) {
+    CriterioOrdenamiento.FECHA -> R.string.orden_fecha
+    CriterioOrdenamiento.PRIORIDAD -> R.string.orden_prioridad
+}
+
+/** Convierte la fecha almacenada como milisegundos en un texto legible para la persona usuaria. */
+private fun formatearFecha(fecha: Long): String = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(fecha))
+
+/** Devuelve un color complementario para cada prioridad. */
 private fun colorPrioridad(prioridad: Prioridad): Color = when (prioridad) {
     Prioridad.ALTA -> Color(0xFFB3261E)
     Prioridad.MEDIA -> Color(0xFF9A6700)
     Prioridad.BAJA -> Color(0xFF006E1C)
 }
 
-/** Devuelve un color semántico para cada estado permitido del recordatorio. */
+/** Devuelve un color complementario para cada estado funcional. */
 private fun colorEstado(estado: EstadoRecordatorio): Color = when (estado) {
     EstadoRecordatorio.Pendiente -> Color(0xFF2457D6)
     EstadoRecordatorio.Completado -> Color(0xFF006E1C)
     EstadoRecordatorio.Vencido -> Color(0xFFB3261E)
+}
+
+/** Devuelve un color complementario para el estado de sincronización local-first. */
+private fun colorSincronizacion(estado: EstadoSincronizacion): Color = when (estado) {
+    EstadoSincronizacion.SINCRONIZADO -> Color(0xFF006E1C)
+    EstadoSincronizacion.PENDIENTE -> Color(0xFF2457D6)
+    EstadoSincronizacion.PENDIENTE_ELIMINACION -> Color(0xFF9A6700)
+    EstadoSincronizacion.ERROR -> Color(0xFFB3261E)
 }
